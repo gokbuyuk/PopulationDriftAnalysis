@@ -1,121 +1,111 @@
 # Population drift toolkit
 
-Decide whether a LightGBM model trained on one population can be used on a new population **without
-target labels** for the new population. The toolkit compares the two populations feature by feature and
-jointly, checks out-of-support rows, measures how the model's outputs and attributions change, estimates
-performance without labels, and positions every statistic against a **baseline**: the same statistic
-computed between random subsets of the training population (pure sampling noise).
+Decide whether a LightGBM model fitted on one population can be applied to a new population that has the same features and **no labels**.
 
-| File | Purpose |
-|---|---|
-| `population_drift.py` | One function per test, the orchestrator `population_drift_analyzer`, the baseline pipeline `build_baseline`, the comparison pipeline `run_comparison`, interpretation, CLI |
-| `drift_report.py` | Builds a standalone HTML report (embedded plots, interpretations, full tables) |
-| `make_synthetic_data.py` | Demo data with planted shifts and a LightGBM model |
-| `tests/` | Unit and end-to-end tests (`pytest -q`) |
-| `AGENT_INSTRUCTIONS.md` | Specification an agent can use to build or extend the toolkit |
+The comparison is scored against a baseline: the same statistics computed on random splits of the training population. A fixed cutoff such as PSI ≥ 0.10 is not, by itself, the decision.
+
+Run the commands below from the repository root, with the virtual environment activated. Outputs under `data/`, `demo_data/`, `runs/`, and `reports/` are gitignored. Put your own files there, or anywhere else outside the paths you commit.
+
+Technical detail (tests, null, thresholds, output columns) is in [docs/reference.md](docs/reference.md).
 
 ## Setup
 
+Requires Python 3.10+.
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Workflow
+## Compare your own populations
 
-**Step 1: baseline (training population only).** Run once; set `--subset-size` to the expected size of
-the new population, because PSI, KS D and classifier AUC shrink as sample size grows.
+You need three inputs, and a model file if you want score, attribution, and performance checks.
+
+| File | What it must contain |
+|---|---|
+| Training table | Feature columns, plus the label if you want calibration and label-free performance. Use a **holdout**: rows the model was not fitted on. On rows used for fitting, calibration and the reference AUC are optimistic. |
+| New table | The same feature columns. Labels are not read. Extra columns are ignored once you pass a feature list. |
+| Feature list | One model input per line. Leave out identifiers, timestamps, and anything built from the label or from the decision. |
+| Model (optional) | LightGBM Booster (`.txt`) or a joblib/pickle `LGBMClassifier` / `LGBMRegressor`. |
+
+CSV, Parquet, and Feather are accepted. If missing values are stored as codes, pass them with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct values is treated as categorical anyway, because the Kolmogorov–Smirnov statistic is not valid under heavy ties.
+
+`--subset-size` must be the new table’s row count. PSI, KS D, and the domain-classifier AUC shrink as the sample grows, so a baseline built at the wrong size is not a reference. The training table must be at least `subset-size + 30` rows. Use 30 baseline rounds for a decision (the empirical p-value cannot be smaller than `1/(rounds + 1)`).
 
 ```bash
-python population_drift.py baseline \
-  --train train.parquet --features-file features.txt --categorical c01,c02 \
-  --label-col target --model model.txt \
-  --subset-size 5000 --n-rounds 30 \
-  --out runs/baseline --report runs/baseline_report.html
+python -m population_drift baseline \
+  --train data/train.parquet \
+  --features-file data/features.txt \
+  --categorical country,channel \
+  --label-col target \
+  --model data/model.txt \
+  --missing-sentinels -999 \
+  --subset-size 5000 \
+  --n-rounds 30 \
+  --out runs/baseline
+
+python -m population_drift compare \
+  --train data/train.parquet \
+  --new data/new.parquet \
+  --features-file data/features.txt \
+  --categorical country,channel \
+  --label-col target \
+  --model data/model.txt \
+  --missing-sentinels -999 \
+  --threshold 0.5 \
+  --performance-tolerance 0.02 \
+  --baseline runs/baseline \
+  --out runs/comparison \
+  --report runs/report.html
 ```
 
-**Step 2: comparison (training vs new population).**
+`--threshold` is the operating cutoff used for the predicted-positive rate. Set it to the cutoff you actually deploy, not 0.5, if those differ. `--performance-tolerance` is the absolute AUC drop (binary) or relative error increase (regression) that counts as material. `--problem-type regression` switches the performance metrics.
+
+Omit `--baseline` and a size-matched baseline is built under `runs/comparison/baseline`. Rebuild the baseline yourself when the new population’s size changes.
+
+Regenerate the HTML report from a finished run:
 
 ```bash
-python population_drift.py compare \
-  --train train.parquet --new new.parquet --features-file features.txt --categorical c01,c02 \
-  --label-col target --model model.txt \
-  --baseline runs/baseline --out runs/comparison --report runs/report.html
+python -m population_drift.report --comparison runs/comparison --out runs/report.html
+python -m population_drift.report --baseline runs/baseline --out runs/baseline_report.html
 ```
 
-Without `--baseline`, a size-matched baseline is built automatically in `runs/comparison/baseline`.
-The report can be regenerated at any time:
+### What to open
+
+The compare command prints a verdict, the signals, and the flagged features. The same content is in:
+
+| Path | Contents |
+|---|---|
+| `runs/report.html` | Report. Open it in a browser. |
+| `runs/comparison/decision.json` | `verdict`, `verdict_level` (`red`, `amber`, `green`), and one record per signal. |
+| `runs/comparison/feature_assessment.csv` | Per-feature severity and the reason string. |
+| `runs/comparison/baseline_comparison.csv` | Every recorded statistic against its baseline percentile and empirical p-value. |
+| `runs/comparison/tables/` | One CSV per task. |
+
+`red` means do not use the model as is: at least one signal is red. `amber` means use only with review. `green` means no red signal, at most two amber signals, and none of those amber signals on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP on the training population.
+
+A green label is not a measurement of accuracy on the new population. Concept shift, a change in P(y|x), cannot be seen without labels. The performance numbers in the report are estimates under the assumptions in [docs/reference.md](docs/reference.md).
+
+## Synthetic demo
+
+About two minutes. This checks the pipeline; it is not a result about any real population.
 
 ```bash
-python drift_report.py --comparison runs/comparison --out runs/report.html
-python drift_report.py --baseline runs/baseline --out runs/baseline_report.html
-```
-
-**Demo** (about 2 minutes):
-
-```bash
-python make_synthetic_data.py --out demo_data
+python -m population_drift.synthetic --out demo_data
 COMMON="--train demo_data/train.csv --features-file demo_data/features.txt --categorical c01,c02,c03,c04 --label-col target --model demo_data/model.txt"
-python population_drift.py baseline $COMMON --subset-size 2500 --n-rounds 20 --out runs/baseline
-python population_drift.py compare $COMMON --new demo_data/new.csv --baseline runs/baseline --out runs/comparison --report runs/report.html
+python -m population_drift baseline $COMMON --subset-size 2500 --n-rounds 20 --out runs/baseline
+python -m population_drift compare $COMMON --new demo_data/new.csv --baseline runs/baseline --out runs/comparison --report runs/report.html
 ```
 
-### Inputs
+## Layout
 
-- `--train`, `--new`: CSV, Parquet or Feather. Use `--missing-sentinels -999` if missing values are coded.
-- `--features` / `--features-file`: the model's input features. If omitted, all shared columns except
-  `--label-col` and `--exclude` are used. Exclude IDs and timestamps.
-- `--categorical`: categorical features. Non-numeric columns and numeric columns with ≤ 10 distinct values
-  are treated as categorical automatically.
-- `--model` (optional): LightGBM Booster file (`.txt`) or pickled/joblib `LGBMClassifier`/`LGBMRegressor`.
-  Enables score drift, SHAP drift and label-free performance estimation. Binary classification and
-  regression are supported (`--problem-type`).
-- `--label-col` (optional): label in the training data. Enables calibration, importance-weighted
-  performance and BBSE. **Pass a labelled holdout of the training population** (rows the model was not fitted
-  on); on training rows these checks are optimistic.
-
-### Outputs
-
-```
-runs/baseline/
-  baseline_statistics.csv   long table: round, task, table, feature, metric, value
-  baseline_summary.csv      mean, sd, p50/p90/p95/p99 per statistic
-  baseline_metadata.json
-runs/comparison/
-  decision.json             verdict, traffic-light signals, warnings
-  feature_assessment.csv    per-feature severity with reasons
-  baseline_comparison.csv   every statistic vs its baseline (threshold, empirical p, exceeds)
-  tables/<task>__<table>.csv  full results of every task
-  plot_data.json, metadata.json
-```
-
-The comparison also prints a console summary (verdict, signals, flagged features).
-
-## What is tested
-
-| Area | Function | Methods |
-|---|---|---|
-| Continuous features | `compare_continuous_distributions` | KS, Anderson–Darling, Cramér–von Mises (BH-adjusted); SMD with CI, variance ratio, Wasserstein/SD, PSI with bootstrap CI |
-| Equivalence | `run_equivalence_tests` | TOST on means with margin 0.1 SD (evidence *for* similarity) |
-| Categorical features | `compare_categorical_distributions` | Chi-square (sparse levels merged), Cramér's V, Jensen–Shannon, PSI, unseen-level share |
-| Missingness | `compare_missingness`, `compare_missingness_patterns` | Two-proportion z-test, Cohen's h; joint pattern chi-square / JS |
-| Joint distribution | `classifier_two_sample_test`, `mmd_test`, `energy_distance_test` | LightGBM domain classifier (OOF AUC, bootstrap CI, permutation p, drivers); MMD and energy distance with permutation p |
-| Dependence | `compare_correlation_structure` | Spearman Frobenius-norm permutation test; per-pair Fisher z |
-| Support | `check_range_coverage`, `detect_joint_outliers` | Out-of-range share + binomial test; Isolation Forest calibrated on held-out training rows |
-| Model behaviour | `compare_prediction_distributions`, `compare_shap_distributions` | Score KS/PSI, positive-rate z-test, borderline share; TreeSHAP KS, importance rank ρ |
-| Performance (no labels) | `assess_calibration`, `estimate_importance_weighted_performance`, `estimate_performance_cbpe`, `estimate_label_shift_bbse` | Calibration (ECE, slope); density-ratio weighting with Kish ESS; CBPE; BBSE prior estimate |
-
-## How the decision is made
-
-A feature is **red** when its difference is significant after multiple-testing correction, larger than the
-baseline 95th percentile, and large (PSI ≥ 0.25, KS D ≥ 0.2, |SMD| ≥ 0.5 or Cramér's V ≥ 0.3, or a missing-rate
-change with |h| ≥ 0.5). **Amber** requires the same evidence with a moderate effect. Global signals (classifier AUC,
-kernel tests, out-of-support share, score PSI, ESS, estimated performance, prior shift) follow the thresholds in
-`Thresholds`, and each is checked against the baseline as well.
-
-Verdict: **red** if any signal is red; **green** if there is no red, at most two amber, and none involving
-model-important features (top 80% of mean |SHAP|); **amber** otherwise. All thresholds are in
-`DriftConfig`/`Thresholds` and are recorded in the outputs.
+| Path | Role |
+|---|---|
+| `population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
+| `population_drift/report.py` | HTML report (`python -m population_drift.report`) |
+| `population_drift/synthetic.py` | Synthetic populations and a demo model |
+| `docs/reference.md` | Methods, decision rule, configuration, output columns |
 
 ## Python API
 
@@ -124,24 +114,14 @@ import population_drift as pdrift
 
 config = pdrift.DriftConfig(problem_type="binary", decision_threshold=0.5)
 result = pdrift.population_drift_analyzer(train, new, features, categorical, model, "target", config)
-result.table("continuous")                     # any task table
+result.table("continuous")
 
-baseline = pdrift.build_baseline(train, features, categorical, model, "target", n_rounds=30,
-                                 subset_size=len(new), config=config, output_dir="runs/baseline")
-decision = pdrift.run_comparison(train, new, features, categorical, model, "target", config,
-                                 baseline_dir="runs/baseline", output_dir="runs/comparison")
+baseline = pdrift.build_baseline(
+    train, features, categorical, model, "target",
+    n_rounds=30, subset_size=len(new), config=config, output_dir="runs/baseline",
+)
+decision = pdrift.run_comparison(
+    train, new, features, categorical, model, "target", config,
+    baseline_dir="runs/baseline", output_dir="runs/comparison",
+)
 ```
-
-## Limitations
-
-- **Concept shift** (a change in P(y|x)) cannot be detected without labels. Label a small random sample of
-  the new population to confirm the conclusion.
-- Importance weighting assumes covariate shift only; CBPE assumes a calibrated model; BBSE assumes P(x|y) is
-  unchanged. When they disagree, treat the performance estimate as inconclusive.
-- Baseline empirical p-values have a resolution of 1/(rounds + 1); use ≥ 30 rounds for decisions.
-- Rule-of-thumb thresholds are conventions; adjust them to your domain's tolerance (`--performance-tolerance`,
-  `Thresholds`).
-- False alarms: on 10 synthetic pairs drawn from the same distribution (2,500 vs 1,000 rows,
-  10-round baselines) the verdict was never red, but 3 of 10 were amber because a single chance signal crossed its
-  threshold. Treat an amber verdict caused by one weak signal as "investigate", not as evidence of shift.
-- Heavy tasks subsample (`max_kernel_rows`, `max_classifier_rows`, `max_shap_rows`, `max_iforest_rows`).
