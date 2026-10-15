@@ -32,21 +32,31 @@ logger = logging.getLogger("drift_report")
 GLOBAL_FEATURE = "__global__"
 SOURCE_COLOR = "#2563eb"
 TARGET_COLOR = "#ea580c"
-LEVEL_COLORS = {"green": "#16a34a", "amber": "#d97706", "red": "#dc2626", "info": "#64748b"}
-LEVEL_LABELS = {"green": "OK", "amber": "Caution", "red": "Material", "info": "Info"}
+LEVEL_COLORS = {"mild": "#16a34a", "moderate": "#d97706", "severe": "#dc2626", "info": "#64748b"}
+LEVEL_LABELS = {"mild": "mild", "moderate": "moderate", "severe": "severe", "info": "info"}
 KEY_DTYPES = {"task": str, "table": str, "feature": str, "metric": str}
+METRIC_DISPLAY = {
+    "auc": "area under the curve (AUC)",
+    "brier": "Brier score",
+    "log_loss": "log loss",
+    "rmse": "root mean squared error (RMSE)",
+    "mae": "mean absolute error (MAE)",
+    "accuracy": "accuracy",
+    "precision": "precision",
+    "recall": "recall",
+}
 GLOBAL_METRIC_LABELS = {
-    ("domain_classifier", "auc"): "Domain classifier AUC",
-    ("mmd", "mmd2"): "MMD²",
+    ("domain_classifier", "auc"): "Domain classifier area under the curve (AUC)",
+    ("mmd", "mmd2"): "squared maximum mean discrepancy (MMD²)",
     ("energy", "energy_distance"): "Energy distance",
     ("correlation", "frobenius"): "Correlation Δ (Frobenius)",
     ("joint_outliers", "ood_share"): "Out-of-support share",
-    ("missingness_patterns", "js_distance"): "Missingness pattern JS",
-    ("prediction_drift", "psi"): "Score PSI",
-    ("prediction_drift", "ks_d"): "Score KS D",
+    ("missingness_patterns", "js_distance"): "Missingness pattern Jensen–Shannon (JS)",
+    ("prediction_drift", "psi"): "Score Population Stability Index (PSI)",
+    ("prediction_drift", "ks_d"): "Score Kolmogorov–Smirnov statistic (KS D)",
     ("prediction_drift", "positive_rate_cohens_h_abs"): "Positive rate |h|",
-    ("shap_drift", "rank_rho_deficit"): "1 − SHAP rank ρ",
-    ("weighted_performance", "ess_deficit"): "1 − ESS ratio",
+    ("shap_drift", "rank_rho_deficit"): "1 − Shapley additive explanations (SHAP) rank ρ",
+    ("weighted_performance", "ess_deficit"): "1 − effective sample size (ESS) ratio",
 }
 
 
@@ -166,8 +176,22 @@ def _scalar(table: pd.DataFrame, column: str) -> float:
 
 
 def _level_badge(level: str) -> str:
+    """Coloured label. The text is the level name: severe, moderate, mild, or info."""
     level = level if level in LEVEL_COLORS else "info"
     return f'<span class="badge {level}">{LEVEL_LABELS[level]}</span>'
+
+
+def _pair_line(run: ComparisonRun, *tasks: str) -> str:
+    """One line naming the populations compared by these tasks."""
+    pairs = run.metadata.get("task_pairs") or {}
+    labels: list[str] = []
+    for task in tasks:
+        label = pairs.get(task)
+        if label and label not in labels:
+            labels.append(label)
+    if not labels:
+        return ""
+    return f"<p class='pair'>Pair: {html.escape(' · '.join(labels))}.</p>"
 
 
 def table_html(df: pd.DataFrame, columns: Sequence[str] | None = None, rename: dict[str, str] | None = None,
@@ -214,7 +238,7 @@ def _style_axes(ax: plt.Axes) -> None:
 # Plots
 # --------------------------------------------------------------------------------------
 def plot_feature_overview(run: ComparisonRun) -> str:
-    """PSI per feature (coloured by severity, baseline p95 ticks) and drift vs model importance."""
+    """Population Stability Index (PSI) per feature (coloured by severity, baseline p95 ticks) and drift vs model importance."""
     features = run.features.dropna(subset=["psi"]).sort_values("psi")
     if features.empty:
         return ""
@@ -231,20 +255,20 @@ def plot_feature_overview(run: ComparisonRun) -> str:
             ax.plot([p95[feature]] * 2, [i - 0.4, i + 0.4], color="black", lw=2)
     ax.axvline(0.10, ls="--", color="#999", lw=1)
     ax.axvline(0.25, ls="--", color="#444", lw=1)
-    ax.set_xlabel("PSI  (dashed: 0.10 / 0.25 rules of thumb; black tick: baseline 95th pct)")
+    ax.set_xlabel("Population Stability Index (PSI)  (dashed: 0.10 / 0.25 rules of thumb; black tick: baseline 95th pct)")
     ax.set_title("Drift per feature (colour = severity)")
     _style_axes(ax)
     if has_importance:
         ax = axes[1]
         ax.scatter(features["model_importance_share"], features["psi"], c=colors, s=60, edgecolor="white")
         for row in features.itertuples():
-            if row.severity != "green" or row.model_importance_share >= features["model_importance_share"].quantile(0.75):
+            if row.severity != "mild" or row.model_importance_share >= features["model_importance_share"].quantile(0.75):
                 ax.annotate(row.feature, (row.model_importance_share, row.psi), xytext=(4, 3),
                             textcoords="offset points", fontsize=8)
         ax.axhline(0.10, ls="--", color="#999", lw=1)
         ax.axhline(0.25, ls="--", color="#444", lw=1)
-        ax.set_xlabel("Model importance (share of mean |SHAP| on training population)")
-        ax.set_ylabel("PSI")
+        ax.set_xlabel("Model importance (share of mean |Shapley additive explanations (SHAP)| on training population)")
+        ax.set_ylabel("Population Stability Index (PSI)")
         ax.set_title("Drift vs model importance (top-right = critical)")
         _style_axes(ax)
     fig.tight_layout()
@@ -252,7 +276,7 @@ def plot_feature_overview(run: ComparisonRun) -> str:
 
 
 def plot_ecdfs(run: ComparisonRun, features: Sequence[str]) -> str:
-    """ECDF overlays (from stored quantiles) for selected continuous features."""
+    """empirical cumulative distribution function (ECDF) overlays (from stored quantiles) for selected continuous features."""
     quantiles = run.plot_data.get("continuous", {}).get("quantiles", {})
     features = [f for f in features if f in quantiles]
     if not features:
@@ -266,14 +290,14 @@ def plot_ecdfs(run: ComparisonRun, features: Sequence[str]) -> str:
         ax.step(q["source"], q["probs"], where="post", color=SOURCE_COLOR, label="training", lw=1.6)
         ax.step(q["target"], q["probs"], where="post", color=TARGET_COLOR, label="new", lw=1.6)
         row = stats.loc[feature]
-        ax.set_title(f"{feature}: KS D={row['ks_d']:.3f}, PSI={row['psi']:.3f}", fontsize=10)
-        ax.set_ylabel("ECDF")
+        ax.set_title(f"{feature}: Kolmogorov–Smirnov statistic (KS D)={row['ks_d']:.3f}, Population Stability Index (PSI)={row['psi']:.3f}", fontsize=10)
+        ax.set_ylabel("empirical cumulative distribution function (ECDF)")
         _style_axes(ax)
     for ax in list(axes.flat)[len(features):]:
         ax.axis("off")
     axes.flat[0].legend(frameon=False, fontsize=8)
     fig.tight_layout()
-    return figure_html(fig, "ECDF comparison")
+    return figure_html(fig, "empirical cumulative distribution function (ECDF) comparison")
 
 
 def plot_categories(run: ComparisonRun, features: Sequence[str]) -> str:
@@ -292,7 +316,7 @@ def plot_categories(run: ComparisonRun, features: Sequence[str]) -> str:
         ax.bar(x - 0.2, data["source"], 0.4, color=SOURCE_COLOR, label="training")
         ax.bar(x + 0.2, data["target"], 0.4, color=TARGET_COLOR, label="new")
         ax.set_xticks(x, [str(level)[:12] for level in data["levels"]], rotation=45 if len(x) > 5 else 0, fontsize=8)
-        ax.set_title(f"{feature}: V={stats.loc[feature, 'cramers_v']:.3f}, PSI={stats.loc[feature, 'psi']:.3f}",
+        ax.set_title(f"{feature}: V={stats.loc[feature, 'cramers_v']:.3f}, Population Stability Index (PSI)={stats.loc[feature, 'psi']:.3f}",
                      fontsize=10)
         ax.set_ylabel("share")
         _style_axes(ax)
@@ -360,7 +384,7 @@ def plot_null_grid(entries: Sequence[dict[str, Any]], title: str) -> str:
 
 
 def plot_domain_classifier(run: ComparisonRun, baseline: BaselineRun | None) -> str:
-    """Domain-classifier score distributions, AUC vs baseline null, and separation drivers."""
+    """Domain-classifier score distributions, area under the curve (AUC) vs baseline null, and separation drivers."""
     data = run.plot_data.get("domain_classifier")
     main = run.table("domain_classifier")
     if not data or main.empty:
@@ -371,12 +395,12 @@ def plot_domain_classifier(run: ComparisonRun, baseline: BaselineRun | None) -> 
     width = data["bins"][1] - data["bins"][0]
     axes[0].bar(centers, data["source_hist"], width, color=SOURCE_COLOR, alpha=0.55, label="training")
     axes[0].bar(centers, data["target_hist"], width, color=TARGET_COLOR, alpha=0.55, label="new")
-    axes[0].set_xlabel("out-of-fold P(new population | x)")
+    axes[0].set_xlabel("out-of-fold (OOF) P(new population | x)")
     axes[0].set_title("Classifier scores by population", fontsize=10)
     axes[0].legend(frameon=False, fontsize=8)
     _style_axes(axes[0])
     null = baseline.null("domain_classifier", "auc") if baseline else np.array([])
-    _null_panel(axes[1], null, _scalar(main, "auc"), f"AUC {_scalar(main, 'auc'):.3f} vs baseline null")
+    _null_panel(axes[1], null, _scalar(main, "auc"), f"area under the curve (AUC) {_scalar(main, 'auc'):.3f} vs baseline null")
     axes[1].legend(frameon=False, fontsize=7)
     axes[2].barh(importance["feature"], importance["gain_share"], color="#475569")
     axes[2].set_xlabel("share of split gain")
@@ -424,7 +448,7 @@ def plot_support(run: ComparisonRun) -> str:
         centers, width = (bins[:-1] + bins[1:]) / 2, bins[1] - bins[0]
         ax.bar(centers, outliers["source_hist"], width, color=SOURCE_COLOR, alpha=0.55, label="training (held-out)")
         ax.bar(centers, outliers["target_hist"], width, color=TARGET_COLOR, alpha=0.55, label="new")
-        ax.axvline(outliers["threshold"], color="black", ls="--", lw=1, label="OOD threshold")
+        ax.axvline(outliers["threshold"], color="black", ls="--", lw=1, label="out-of-distribution (OOD) threshold")
         ax.set_xlabel("Isolation Forest score (lower = more unusual)")
         ax.set_title("Joint novelty", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
@@ -444,7 +468,7 @@ def plot_support(run: ComparisonRun) -> str:
 
 
 def plot_model_outputs(run: ComparisonRun) -> str:
-    """Model score distributions and mean |SHAP| by population."""
+    """Model score distributions and mean |Shapley additive explanations (SHAP)| by population."""
     prediction = run.plot_data.get("prediction_drift")
     shap = run.table("shap_drift")
     panels = int(bool(prediction)) + int(not shap.empty)
@@ -471,7 +495,7 @@ def plot_model_outputs(run: ComparisonRun) -> str:
         ax.barh(y - 0.2, top["mean_abs_shap_source"], 0.4, color=SOURCE_COLOR, label="training")
         ax.barh(y + 0.2, top["mean_abs_shap_target"], 0.4, color=TARGET_COLOR, label="new")
         ax.set_yticks(y, [f"{f} *" if imp else f for f, imp in zip(top["feature"], top["important"])], fontsize=8)
-        ax.set_xlabel("mean |SHAP|  (* = model-important)")
+        ax.set_xlabel("mean |Shapley additive explanations (SHAP)|  (* = model-important)")
         ax.set_title("Feature attributions", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
         _style_axes(ax)
@@ -480,9 +504,9 @@ def plot_model_outputs(run: ComparisonRun) -> str:
 
 
 def plot_performance(run: ComparisonRun) -> str:
-    """Reference vs estimated metric with 95% CI for each estimation method."""
+    """Reference vs estimated metric with 95% confidence interval (CI) for each estimation method."""
     rows = []
-    for task, label in (("weighted_performance", "Importance weighting"), ("cbpe", "CBPE")):
+    for task, label in (("weighted_performance", "Importance weighting"), ("cbpe", "confidence-based performance estimation (CBPE)")):
         table = run.table(task)
         for row in table.itertuples():
             rows.append((row.metric, label, row.reference_value, row.estimate, row.ci_low, row.ci_high))
@@ -502,7 +526,7 @@ def plot_performance(run: ComparisonRun) -> str:
             ax.plot(row["estimate"], i, marker="o", color=TARGET_COLOR, ms=7, label="new (estimate)" if i == 0 else None)
         ax.set_yticks(range(len(sub)), sub["method"], fontsize=8)
         ax.set_ylim(-0.6, len(sub) - 0.4)
-        ax.set_title(metric, fontsize=10)
+        ax.set_title(METRIC_DISPLAY.get(str(metric), str(metric)), fontsize=10)
         ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
         ax.tick_params(axis="x", labelsize=8)
         _style_axes(ax)
@@ -510,7 +534,7 @@ def plot_performance(run: ComparisonRun) -> str:
         ax.axis("off")
     handles, labels = axes.flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper right", frameon=False, fontsize=8, ncol=2)
-    fig.suptitle("Reference vs estimate on the new population (95% CI)", fontsize=11, x=0.02, ha="left")
+    fig.suptitle("Reference vs estimate on the new population (95% confidence interval (CI))", fontsize=11, x=0.02, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     return figure_html(fig, "Estimated performance")
 
@@ -532,7 +556,7 @@ def plot_calibration(run: ComparisonRun) -> str:
 
 
 def plot_baseline_feature_variability(baseline: BaselineRun) -> str:
-    """95th percentile of per-feature PSI and KS D across baseline rounds."""
+    """95th percentile of per-feature Population Stability Index (PSI) and Kolmogorov–Smirnov statistic (KS D) across baseline rounds."""
     summary = baseline.summary
     psi = summary[(summary["metric"] == "psi") & summary["task"].isin(["continuous", "categorical"])]
     if psi.empty:
@@ -542,11 +566,11 @@ def plot_baseline_feature_variability(baseline: BaselineRun) -> str:
     ax.barh(psi["feature"], psi["p95"], color="#94a3b8", label="p95")
     ax.scatter(psi["p50"], psi["feature"], color="black", s=14, zorder=3, label="median")
     ax.axvline(0.10, ls="--", color="#999", lw=1)
-    ax.set_xlabel("PSI between random training subsets (natural variability)")
+    ax.set_xlabel("Population Stability Index (PSI) between random training subsets (natural variability)")
     ax.legend(frameon=False, fontsize=8)
     _style_axes(ax)
     fig.tight_layout()
-    return figure_html(fig, "Baseline per-feature PSI")
+    return figure_html(fig, "Baseline per-feature Population Stability Index (PSI)")
 
 
 def global_null_entries(baseline: BaselineRun | None, run: ComparisonRun | None) -> list[dict[str, Any]]:
@@ -575,7 +599,7 @@ class Section:
 
 
 def _feature_counts(features: pd.DataFrame) -> dict[str, int]:
-    return {level: int((features["severity"] == level).sum()) for level in ("red", "amber", "green")}
+    return {level: int((features["severity"] == level).sum()) for level in ("severe", "moderate", "mild")}
 
 
 def section_summary(run: ComparisonRun, baseline: BaselineRun | None) -> Section:
@@ -592,17 +616,18 @@ def section_summary(run: ComparisonRun, baseline: BaselineRun | None) -> Section
                f"<b>{_fmt(decision.get('baseline_subset_size'))}</b>-row training subsets")
     signal_rows = "".join(
         f"<tr><td>{_level_badge(s['level'])}</td><td>{html.escape(s['signal'])}</td>"
+        f"<td>{html.escape(s.get('pair') or '')}</td>"
         f"<td>{html.escape(s['value'])}</td><td class='muted'>{html.escape(s['detail'])}</td></tr>"
-        for s in sorted(decision["signals"], key=lambda s: -{"red": 2, "amber": 1, "green": 0, "info": -1}[s["level"]]))
-    signals = (f'<div class="table-wrap"><table><thead><tr><th>Level</th><th>Signal</th><th>Observed</th>'
+        for s in sorted(decision["signals"], key=lambda s: -{"severe": 2, "moderate": 1, "mild": 0, "info": -1}[s["level"]]))
+    signals = (f'<div class="table-wrap"><table><thead><tr><th>Level</th><th>Signal</th><th>Pair</th><th>Observed</th>'
                f'<th>Detail</th></tr></thead><tbody>{signal_rows}</tbody></table></div>')
 
     findings = []
     features = run.features
-    flagged = features[features["severity"] != "green"]
+    flagged = features[features["severity"] != "mild"]
     counts = _feature_counts(features)
-    findings.append(f"<b>{counts['red']}</b> feature(s) with material drift and <b>{counts['amber']}</b> with moderate "
-                    f"drift out of {len(features)}; <b>{counts['green']}</b> are within natural variability or negligible.")
+    findings.append(f"<b>{counts['severe']}</b> feature(s) with material drift and <b>{counts['moderate']}</b> with moderate "
+                    f"drift out of {len(features)}; <b>{counts['mild']}</b> are within natural variability or negligible.")
     for row in flagged.head(6).itertuples():
         importance = " (model-important)" if meta["has_model"] and row.important else ""
         findings.append(f"{_level_badge(row.severity)} <b>{html.escape(row.feature)}</b>{importance}: "
@@ -612,23 +637,25 @@ def section_summary(run: ComparisonRun, baseline: BaselineRun | None) -> Section
         auc = _scalar(domain, "auc")
         strength = ("indistinguishable" if auc <= 0.55 else "mildly separable" if auc <= 0.65
                     else "moderately separable" if auc <= 0.80 else "strongly separable")
-        findings.append(f"Jointly, the populations are <b>{strength}</b> (classifier AUC {auc:.3f}).")
+        findings.append(f"Jointly, the populations are <b>{strength}</b> (classifier area under the curve (AUC) {auc:.3f}).")
     outliers = run.table("joint_outliers")
     if not outliers.empty:
         findings.append(f"<b>{_pct(_scalar(outliers, 'ood_share'))}</b> of new rows fall outside the training support "
                         f"(expected {_pct(_scalar(outliers, 'expected_share'))}); predictions for these rows are "
                         "extrapolations.")
-    for task, label in (("weighted_performance", "importance weighting"), ("cbpe", "CBPE")):
+    for task, label in (("weighted_performance", "importance weighting"), ("cbpe", "confidence-based performance estimation (CBPE)")):
         perf = run.table(task)
         if not perf.empty:
             row = perf.iloc[0]
-            findings.append(f"Estimated {row['metric'].upper()} on the new population ({label}): <b>{row['estimate']:.3f}</b> "
+            metric_name = METRIC_DISPLAY.get(str(row["metric"]), str(row["metric"]))
+            findings.append(f"Estimated {metric_name} on the new population ({label}): <b>{row['estimate']:.3f}</b> "
                             f"[{_fmt(row['ci_low'])}–{_fmt(row['ci_high'])}] vs reference {row['reference_value']:.3f}.")
     label_shift = run.table("label_shift")
     if not label_shift.empty:
         findings.append(f"Estimated positive rate: {_pct(_scalar(label_shift, 'source_prevalence'))} → "
                         f"<b>{_pct(_scalar(label_shift, 'target_prevalence_estimate'))}</b> "
-                        f"[{_pct(_scalar(label_shift, 'ci_low'))}–{_pct(_scalar(label_shift, 'ci_high'))}] (BBSE).")
+                        f"[{_pct(_scalar(label_shift, 'ci_low'))}–{_pct(_scalar(label_shift, 'ci_high'))}] "
+                        "(black-box shift estimation (BBSE)).")
 
     caveats = ["Without labels for the new population, <b>concept shift</b> (a change in P(y|x)) cannot be detected; "
                "all performance estimates assume it is absent. Label a small random sample to verify."]
@@ -646,8 +673,8 @@ def section_summary(run: ComparisonRun, baseline: BaselineRun | None) -> Section
             'the distribution of the same statistic between random subsets of the training population (pure sampling '
             'noise). A difference is flagged only if it is statistically significant after multiple-testing correction, '
             'larger than the baseline 95th percentile, and at least moderate by effect-size rules of thumb. '
-            f'{_level_badge("green")} within noise or negligible · {_level_badge("amber")} real, moderate · '
-            f'{_level_badge("red")} real, large.</div>')
+            f'{_level_badge("mild")} within noise or negligible · {_level_badge("moderate")} real, moderate · '
+            f'{_level_badge("severe")} real, large.</div>')
     return Section("summary", "Executive summary", body)
 
 
@@ -656,24 +683,24 @@ def section_features(run: ComparisonRun) -> Section:
     features = run.features
     counts = _feature_counts(features)
     has_model = run.metadata["has_model"]
-    critical = features[(features["severity"] == "red") & features["important"]]
-    text = (f"<p>{counts['red']} red, {counts['amber']} amber and {counts['green']} green features. "
+    critical = features[(features["severity"] == "severe") & features["important"]]
+    text = (f"<p>{counts['severe']} severe, {counts['moderate']} moderate and {counts['mild']} mild features. "
             + (f"Critical (large drift on a model-important feature): <b>{', '.join(map(html.escape, critical['feature']))}</b>. "
                if len(critical) else "No large drift on model-important features. ")
-            + ("Model importance is the share of mean |SHAP| on the training population; drift on low-importance "
+            + ("Model importance is the share of mean |Shapley additive explanations (SHAP)| on the training population; drift on low-importance "
                "features rarely affects predictions." if has_model else
                "No model was supplied, so every feature is treated as important.") + "</p>")
     columns = ["feature", "type", "severity", "important", "model_importance_share", "psi", "ks_d", "smd",
                "cramers_v", "equivalent_mean", "significant", "beyond_baseline", "reasons"]
-    rename = {"model_importance_share": "importance share", "equivalent_mean": "equivalent mean (TOST)",
-              "beyond_baseline": "beyond baseline", "ks_d": "KS D", "smd": "SMD", "cramers_v": "Cramér's V",
-              "psi": "PSI"}
+    rename = {"model_importance_share": "importance share", "equivalent_mean": "equivalent mean, two one-sided tests (TOST)",
+              "beyond_baseline": "beyond baseline", "ks_d": "Kolmogorov–Smirnov statistic (KS D)", "smd": "standardized mean difference (SMD)", "cramers_v": "Cramér's V",
+              "psi": "Population Stability Index (PSI)"}
     body = plot_feature_overview(run) + text + table_html(features, columns, rename, level_col="severity")
-    return Section("features", "Feature-level drift", body)
+    return Section("features", "Feature-level drift", _pair_line(run, "continuous", "categorical", "missingness") + body)
 
 
 def section_continuous(run: ComparisonRun, top_k: int) -> Section | None:
-    """ECDFs of the most drifted continuous features and the full test table."""
+    """empirical cumulative distribution functions (empirical cumulative distribution function (ECDF)s) of the most drifted continuous features and the full test table."""
     table = run.table("continuous")
     if table.empty or "ks_d" not in table:
         return None
@@ -684,26 +711,27 @@ def section_continuous(run: ComparisonRun, top_k: int) -> Section | None:
     merged["severity"] = merged["feature"].map(severity)
     merged["baseline_p95_psi"] = merged["feature"].map(run.baseline_threshold("continuous", "psi"))
     merged["baseline_p95_ks"] = merged["feature"].map(run.baseline_threshold("continuous", "ks_d"))
-    order = merged.assign(_o=merged["severity"].map({"red": 2, "amber": 1, "green": 0})).sort_values(
+    order = merged.assign(_o=merged["severity"].map({"severe": 2, "moderate": 1, "mild": 0})).sort_values(
         ["_o", "ks_d"], ascending=False)
     top = order["feature"].head(top_k).tolist()
     n_sig = int((merged["ks_p_adj"] < run.metadata["config"]["alpha"]).sum())
     n_equiv = int(merged.get("equivalent", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
-    text = (f"<p>{n_sig} of {len(merged)} continuous features differ significantly (KS, adjusted p &lt; α); "
-            f"{n_equiv} have statistically equivalent means (TOST, |SMD| &lt; "
-            f"{run.metadata['config']['equivalence_margin_smd']}). The ECDFs show the {len(top)} most drifted features: "
+    text = (f"<p>{n_sig} of {len(merged)} continuous features differ significantly (Kolmogorov–Smirnov (KS), adjusted p &lt; α); "
+            f"{n_equiv} have statistically equivalent means (two one-sided tests (TOST), |standardized mean difference (SMD)| &lt; "
+            f"{run.metadata['config']['equivalence_margin_smd']}). The empirical cumulative distribution functions (empirical cumulative distribution function (ECDF)s) show the {len(top)} most drifted features: "
             "horizontal gaps are location shifts, different slopes are spread changes, divergence at the ends are "
-            "tail changes. Significance alone is not decisive with large samples; use SMD, PSI and the baseline "
+            "tail changes. Significance alone is not decisive with large samples; use standardized mean difference (SMD), Population Stability Index (PSI) and the baseline "
             "columns for magnitude.</p>")
     columns = ["feature", "severity", "mean_source", "mean_target", "smd", "smd_ci_low", "smd_ci_high", "var_ratio",
                "ks_d", "baseline_p95_ks", "ks_p_adj", "ad_p_adj", "cvm_p_adj", "wasserstein_norm", "psi",
                "psi_ci_low", "psi_ci_high", "baseline_p95_psi", "equivalent", "tost_p"]
-    rename = {"smd_ci_low": "SMD CI low", "smd_ci_high": "SMD CI high", "ks_p_adj": "KS p adj",
-              "ad_p_adj": "AD p adj", "cvm_p_adj": "CvM p adj", "wasserstein_norm": "W/SD",
-              "baseline_p95_psi": "baseline p95 PSI", "baseline_p95_ks": "baseline p95 KS"}
+    rename = {"smd_ci_low": "standardized mean difference (SMD) confidence interval (CI) low", "smd_ci_high": "standardized mean difference (SMD) confidence interval (CI) high", "ks_p_adj": "Kolmogorov–Smirnov (KS) p adj",
+              "ad_p_adj": "Anderson–Darling (AD) p adj", "cvm_p_adj": "Cramér–von Mises (CvM) p adj",
+              "wasserstein_norm": "Wasserstein distance / standard deviation (W/SD)",
+              "baseline_p95_psi": "baseline p95 Population Stability Index (PSI)", "baseline_p95_ks": "baseline p95 Kolmogorov–Smirnov (KS)"}
     body = plot_ecdfs(run, top) + text + details("Full continuous-feature table",
                                                   table_html(order, columns, rename, level_col="severity"))
-    return Section("continuous", "Continuous features", body)
+    return Section("continuous", "Continuous features", _pair_line(run, "continuous") + body)
 
 
 def section_categorical(run: ComparisonRun, top_k: int) -> Section | None:
@@ -714,7 +742,7 @@ def section_categorical(run: ComparisonRun, top_k: int) -> Section | None:
     table = table.copy()
     table["severity"] = table["feature"].map(run.features.set_index("feature")["severity"])
     table["baseline_p95_psi"] = table["feature"].map(run.baseline_threshold("categorical", "psi"))
-    order = table.assign(_o=table["severity"].map({"red": 2, "amber": 1, "green": 0})).sort_values(
+    order = table.assign(_o=table["severity"].map({"severe": 2, "moderate": 1, "mild": 0})).sort_values(
         ["_o", "psi"], ascending=False)
     unseen = table[table["unseen_share"] > 0]
     text = (f"<p>{int((table['chi2_p_adj'] < run.metadata['config']['alpha']).sum())} of {len(table)} categorical "
@@ -726,7 +754,7 @@ def section_categorical(run: ComparisonRun, top_k: int) -> Section | None:
                "top_level_target"]
     body = plot_categories(run, order["feature"].head(top_k).tolist()) + text + details(
         "Full categorical-feature table", table_html(order, columns, {"chi2_p_adj": "chi2 p adj"}, level_col="severity"))
-    return Section("categorical", "Categorical features", body)
+    return Section("categorical", "Categorical features", _pair_line(run, "categorical") + body)
 
 
 def section_missingness(run: ComparisonRun) -> Section | None:
@@ -746,11 +774,11 @@ def section_missingness(run: ComparisonRun) -> Section | None:
             + details("Missing-rate table", table_html(table, ["feature", "missing_rate_source", "missing_rate_target",
                                                                "difference", "cohens_h", "z_p_adj"]))
             + details("Most frequent missingness patterns", table_html(patterns)))
-    return Section("missingness", "Missing values", body)
+    return Section("missingness", "Missing values", _pair_line(run, "missingness", "missingness_patterns") + body)
 
 
 def section_joint(run: ComparisonRun, baseline: BaselineRun | None) -> Section | None:
-    """Classifier two-sample test, MMD and energy distance."""
+    """Classifier two-sample test, maximum mean discrepancy (MMD) and energy distance."""
     domain = run.table("domain_classifier")
     if domain.empty:
         return None
@@ -759,16 +787,16 @@ def section_joint(run: ComparisonRun, baseline: BaselineRun | None) -> Section |
     p95 = np.percentile(null, 95) if len(null) else np.nan
     perm_p = _scalar(domain, "permutation_p")
     drivers = run.table("domain_classifier", "importance").head(3)["feature"].tolist()
-    text = (f"<p>A LightGBM classifier trained to tell the populations apart reaches an out-of-fold AUC of "
+    text = (f"<p>A LightGBM classifier trained to tell the populations apart reaches an out-of-fold (OOF) area under the curve (AUC) of "
             f"<b>{auc:.3f}</b> [{_fmt(_scalar(domain, 'auc_ci_low'))}–{_fmt(_scalar(domain, 'auc_ci_high'))}]"
             + (f", permutation p = {perm_p:.3f}" if np.isfinite(perm_p) else "")
             + (f"; the baseline 95th percentile is {p95:.3f}" if np.isfinite(p95) else "")
-            + ". AUC ≈ 0.5 means indistinguishable; 0.55–0.65 mild, 0.65–0.80 moderate, &gt; 0.80 strong shift. "
-            f"The separation is driven mostly by <b>{', '.join(map(html.escape, drivers))}</b>. A low AUC can still "
+            + ". An area under the curve (AUC) near 0.5 means indistinguishable; 0.55–0.65 mild, 0.65–0.80 moderate, &gt; 0.80 strong shift. "
+            f"The separation is driven mostly by <b>{', '.join(map(html.escape, drivers))}</b>. A low area under the curve (AUC) can still "
             "hide a moderate shift in a single feature, so read it together with the feature table.</p>")
     kernel_entries = []
     kernel_rows = []
-    for task, metric, label in (("mmd", "mmd2", "MMD² (RBF kernel)"), ("energy", "energy_distance", "Energy distance")):
+    for task, metric, label in (("mmd", "mmd2", "squared maximum mean discrepancy (MMD²) (radial basis function (RBF) kernel)"), ("energy", "energy_distance", "Energy distance")):
         table = run.table(task)
         if table.empty:
             continue
@@ -785,7 +813,7 @@ def section_joint(run: ComparisonRun, baseline: BaselineRun | None) -> Section |
             + table_html(pd.DataFrame(kernel_rows))
             + details("Classifier test details", table_html(domain))
             + details("All separation drivers", table_html(run.table("domain_classifier", "importance"))))
-    return Section("joint", "Joint distribution", body)
+    return Section("joint", "Joint distribution", _pair_line(run, "domain_classifier", "mmd", "energy") + body)
 
 
 def section_dependence(run: ComparisonRun) -> Section | None:
@@ -804,7 +832,7 @@ def section_dependence(run: ComparisonRun) -> Section | None:
     body = plot_correlation_delta(run) + text + details(
         "Top correlation changes", table_html(pairs, ["feature_a", "feature_b", "rho_source", "rho_target", "delta",
                                                       "fisher_z_p_adj"], max_rows=30))
-    return Section("dependence", "Dependence structure", body)
+    return Section("dependence", "Dependence structure", _pair_line(run, "correlation") + body)
 
 
 def section_support(run: ComparisonRun) -> Section | None:
@@ -830,7 +858,8 @@ def section_support(run: ComparisonRun) -> Section | None:
                                                                     "outside_share", "ratio_to_expected",
                                                                     "binomial_p_adj"]))
             + details("Isolation Forest details", table_html(outliers)))
-    return Section("support", "Support and out-of-distribution rows", body)
+    return Section("support", "Support and out-of-distribution (OOD) rows",
+                   _pair_line(run, "range_coverage", "joint_outliers") + body)
 
 
 def section_model(run: ComparisonRun) -> Section | None:
@@ -840,8 +869,8 @@ def section_model(run: ComparisonRun) -> Section | None:
         return None
     parts = []
     if not prediction.empty:
-        parts.append(f"Model score PSI {_scalar(prediction, 'psi'):.3f} (KS D {_scalar(prediction, 'ks_d'):.3f}); "
-                     "PSI &lt; 0.10 stable, 0.10–0.25 monitor, &gt; 0.25 act.")
+        parts.append(f"Model score Population Stability Index (PSI) {_scalar(prediction, 'psi'):.3f} (Kolmogorov–Smirnov statistic (KS D) {_scalar(prediction, 'ks_d'):.3f}); "
+                     "Population Stability Index (PSI) &lt; 0.10 stable, 0.10–0.25 monitor, &gt; 0.25 act.")
         if "positive_rate_source" in prediction:
             parts.append(f"Predicted positive rate at threshold {_scalar(prediction, 'threshold'):g}: "
                          f"{_pct(_scalar(prediction, 'positive_rate_source'))} → "
@@ -856,11 +885,11 @@ def section_model(run: ComparisonRun) -> Section | None:
     shap = run.table("shap_drift")
     body = (plot_model_outputs(run) + f"<p>{' '.join(parts)}</p>"
             + details("Prediction drift table", table_html(prediction))
-            + details("SHAP drift table", table_html(shap, ["feature", "important", "importance_share_source",
+            + details("Shapley additive explanations (SHAP) drift table", table_html(shap, ["feature", "important", "importance_share_source",
                                                             "importance_rank_source", "importance_rank_target",
                                                             "mean_abs_shap_source", "mean_abs_shap_target",
                                                             "mean_abs_shap_rel_change", "shap_ks_d", "shap_ks_p_adj"])))
-    return Section("model", "Model behaviour", body)
+    return Section("model", "Model behaviour", _pair_line(run, "prediction_drift", "shap_drift") + body)
 
 
 def section_performance(run: ComparisonRun) -> Section | None:
@@ -873,31 +902,33 @@ def section_performance(run: ComparisonRun) -> Section | None:
     summary = run.table("weighted_performance", "summary")
     if not weighted.empty:
         items.append(f"<b>Importance weighting</b> (assumes covariate shift only): labelled training rows are re-weighted "
-                     f"to resemble the new population. Effective sample size ratio {_scalar(summary, 'ess_ratio'):.2f} "
+                     f"to resemble the new population. Effective sample size (ESS) ratio {_scalar(summary, 'ess_ratio'):.2f} "
                      "(&gt; 0.5 reliable, 0.1–0.5 caution, &lt; 0.1 unreliable).")
     if not cbpe.empty:
         ece = _scalar(calibration, "ece")
-        items.append("<b>CBPE</b> (assumes a calibrated model and no concept shift): expected metrics from predicted "
-                     "probabilities, compared like-for-like with CBPE on the training population. "
-                     + (f"Calibration ECE {ece:.3f}: " + ("acceptable." if ece <= 0.05 else
-                                                         "<b>too high, so CBPE estimates are unreliable</b>.")
+        items.append("<b>Confidence-based performance estimation (CBPE)</b> (assumes a calibrated model and an unchanged "
+                     "map from features to labels): expected metrics from predicted "
+                     "probabilities, compared like-for-like with confidence-based performance estimation (CBPE) on the training population. "
+                     + (f"Expected calibration error (ECE) {ece:.3f}: " + ("acceptable." if ece <= 0.05 else
+                                                         "<b>too high, so confidence-based performance estimation (CBPE) estimates are unreliable</b>.")
                         if np.isfinite(ece) else ""))
     if not label_shift.empty:
         shifted = str(label_shift["prior_shift_detected"].iloc[0]) == "True"
-        items.append(f"<b>BBSE</b> (assumes P(x|y) unchanged): estimated positive rate "
+        items.append(f"<b>Black-box shift estimation (BBSE)</b> (assumes P(x|y) unchanged): estimated positive rate "
                      f"{_pct(_scalar(label_shift, 'target_prevalence_estimate'))} vs "
                      f"{_pct(_scalar(label_shift, 'source_prevalence'))} in training"
                      + (" — prior shift detected; recalibrate the intercept or threshold." if shifted else
                         " — no significant prior shift."))
     tolerance = run.metadata["config"]["performance_tolerance"]
     text = (f"<ul>{''.join(f'<li>{i}</li>' for i in items)}</ul><p>Tolerance for the primary metric: {tolerance:g} "
-            f"({'relative' if run.metadata['problem_type'] == 'regression' else 'absolute AUC'}). A signal is red only "
-            "when the whole 95% CI is beyond tolerance. If the methods disagree, treat the result as inconclusive.</p>")
+            f"({'relative' if run.metadata['problem_type'] == 'regression' else 'absolute area under the curve (AUC)'}). A signal is severe only "
+            "when the whole 95% confidence interval (CI) is beyond tolerance. If the methods disagree, treat the result as inconclusive.</p>")
     plots = plot_performance(run) + plot_calibration(run)
     tables = (details("Importance-weighted estimates", table_html(weighted) + table_html(summary))
-              + details("CBPE estimates", table_html(cbpe))
+              + details("Confidence-based performance estimation (CBPE) estimates", table_html(cbpe))
               + details("Calibration and prior shift", table_html(calibration) + table_html(label_shift)))
-    return Section("performance", "Estimated performance (no labels)", plots + text + tables)
+    return Section("performance", "Estimated performance (no labels)",
+                   _pair_line(run, "calibration", "weighted_performance", "cbpe", "label_shift") + plots + text + tables)
 
 
 def section_baseline(run: ComparisonRun | None, baseline: BaselineRun | None) -> Section | None:
@@ -925,34 +956,42 @@ def section_baseline(run: ComparisonRun | None, baseline: BaselineRun | None) ->
     return Section("baseline", "Baseline reference", body)
 
 
-def section_methods(config: dict[str, Any]) -> Section:
+def section_methods(config: dict[str, Any], task_pairs: dict[str, str] | None = None) -> Section:
     """Compact methods and thresholds appendix."""
     th = config["thresholds"]
     rows = [
-        ("Continuous features", "KS, Anderson–Darling, Cramér–von Mises; SMD, variance ratio, Wasserstein/SD, PSI",
-         f"PSI {th['psi_moderate']}/{th['psi_major']}; KS D {th['ks_moderate']}/{th['ks_major']}; |SMD| {th['smd_small']}/{th['smd_large']}"),
-        ("Equivalence", f"TOST on means, margin {config['equivalence_margin_smd']} SD", "p < α ⇒ equivalent"),
-        ("Categorical features", "Chi-square homogeneity (sparse levels merged); Cramér's V, Jensen–Shannon, PSI",
+        ("Continuous features", "Kolmogorov–Smirnov (KS), Anderson–Darling (AD), Cramér–von Mises (CvM); standardized mean difference (SMD), variance ratio, Wasserstein distance / standard deviation (SD), Population Stability Index (PSI)",
+         f"Population Stability Index (PSI) {th['psi_moderate']}/{th['psi_major']}; Kolmogorov–Smirnov statistic (KS D) {th['ks_moderate']}/{th['ks_major']}; |standardized mean difference (SMD)| {th['smd_small']}/{th['smd_large']}"),
+        ("Equivalence", f"Two one-sided tests (TOST) on means, margin {config['equivalence_margin_smd']} standard deviation (SD)", "p < α ⇒ equivalent"),
+        ("Categorical features", "Chi-square homogeneity (sparse levels merged); Cramér's V, Jensen–Shannon (JS), Population Stability Index (PSI)",
          f"V {th['cramers_v_moderate']}/{th['cramers_v_major']}; unseen levels > {th['unseen_level_share']:.0%}"),
-        ("Missingness", "Two-proportion z-test, Cohen's h; pattern chi-square / JS", f"|h| {th['cohens_h_small']}/{th['cohens_h_large']}"),
-        ("Joint distribution", f"LightGBM classifier two-sample test ({config['cv_folds']}-fold OOF AUC, permutation p); "
-         "MMD (RBF) and energy distance with permutation p", f"AUC {th['domain_auc_mild']}/{th['domain_auc_strong']}"),
+        ("Missingness", "Two-proportion z-test, Cohen's h; pattern chi-square / Jensen–Shannon (JS)", f"|h| {th['cohens_h_small']}/{th['cohens_h_large']}"),
+        ("Joint distribution", f"LightGBM classifier two-sample test ({config['cv_folds']}-fold out-of-fold (OOF) area under the curve (AUC), permutation p); "
+         "maximum mean discrepancy (MMD) (RBF) and energy distance with permutation p", f"area under the curve (AUC) {th['domain_auc_mild']}/{th['domain_auc_strong']}"),
         ("Dependence", "Spearman matrices: Frobenius-norm permutation test; per-pair Fisher z (var 1.06/(n−3))",
          f"|Δρ| > {th['correlation_pair_delta']}"),
         ("Support", f"Range [{config['range_quantiles'][0]}, {config['range_quantiles'][1]}] quantiles + binomial test; "
          f"Isolation Forest at {config['ood_quantile']:.0%} held-out quantile + binomial test",
-         f"OOD share {th['ood_share_caution']:.0%}/{th['ood_share_material']:.0%}"),
-        ("Model behaviour", "Score KS/PSI; positive-rate z-test; TreeSHAP KS and rank correlation",
-         f"rank ρ < {th['importance_rank_rho']}; important = top {th['important_feature_cumulative_share']:.0%} of |SHAP|"),
-        ("Performance (no labels)", "Importance weighting (domain-classifier density ratio, Kish ESS); CBPE; BBSE",
-         f"ESS ratio {th['ess_ratio_poor']}/{th['ess_ratio_good']}; tolerance {config['performance_tolerance']}"),
+         f"out-of-distribution (OOD) share {th['ood_share_caution']:.0%}/{th['ood_share_material']:.0%}"),
+        ("Model behaviour", "Score Kolmogorov–Smirnov (KS)/Population Stability Index (PSI); positive-rate z-test; TreeSHAP (Shapley additive explanations) Kolmogorov–Smirnov (KS) and rank correlation",
+         f"rank ρ < {th['importance_rank_rho']}; important = top {th['important_feature_cumulative_share']:.0%} of |Shapley additive explanations (SHAP)|"),
+        ("Performance (no labels)", "Importance weighting (domain-classifier density ratio, Kish effective sample size (ESS)); confidence-based performance estimation (CBPE); black-box shift estimation (BBSE)",
+         f"effective sample size (ESS) ratio {th['ess_ratio_poor']}/{th['ess_ratio_good']}; tolerance {config['performance_tolerance']}"),
         ("Inference", f"{config['correction_method']} correction at α = {config['alpha']}; {config['n_bootstrap']} bootstrap "
          f"resamples; {config['n_permutations']} permutations ({config['n_classifier_permutations']} for the classifier)",
          f"baseline threshold = p{th['baseline_percentile']:.0f}"),
     ]
-    table = pd.DataFrame(rows, columns=["Area", "Methods", "Thresholds (amber / red)"])
-    note = ("<p class='muted'>Thresholds are conventions (Siddiqi 2006 for PSI, Cohen 1988 for effect sizes, Austin 2009 "
-            "for SMD); the baseline comparison is the statistically grounded reference.</p>")
+    pairs = {
+        "Continuous features": "continuous", "Equivalence": "equivalence", "Categorical features": "categorical",
+        "Missingness": "missingness", "Joint distribution": "domain_classifier", "Dependence": "correlation",
+        "Support": "range_coverage", "Model behaviour": "prediction_drift",
+        "Performance (no labels)": "weighted_performance",
+    }
+    recorded = task_pairs or {}
+    rows = [(*row, recorded.get(pairs.get(row[0], ""), "")) for row in rows]
+    table = pd.DataFrame(rows, columns=["Area", "Methods", "Thresholds (moderate / severe)", "Pair"])
+    note = ("<p class='muted'>Thresholds are conventions (Siddiqi 2006 for Population Stability Index (PSI), Cohen 1988 for effect sizes, Austin 2009 "
+            "for standardized mean difference (SMD)); the baseline comparison is the statistically grounded reference.</p>")
     return Section("methods", "Methods and thresholds", table_html(table) + note)
 
 
@@ -998,9 +1037,9 @@ padding-bottom:.35rem}h3{color:#1e40af;margin:1.2rem 0 .5rem}
 th,td{border:1px solid var(--border);padding:.35rem .5rem;text-align:left;vertical-align:top}th{background:#eef2f7;
 position:sticky;top:0}tbody tr:nth-child(even){background:#fafbfc}td.wide{min-width:280px}
 .badge{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.75rem;font-weight:600;color:#fff}
-.badge.green{background:#16a34a}.badge.amber{background:#d97706}.badge.red{background:#dc2626}.badge.info{background:#64748b}
-.verdict{border-radius:10px;padding:1rem 1.3rem;color:#fff;margin-bottom:1rem}.verdict.green{background:#15803d}
-.verdict.amber{background:#b45309}.verdict.red{background:#b91c1c}.verdict.info{background:#475569}
+.badge.mild{background:#16a34a}.badge.moderate{background:#d97706}.badge.severe{background:#dc2626}.badge.info{background:#64748b}
+.verdict{border-radius:10px;padding:1rem 1.3rem;color:#fff;margin-bottom:1rem}.verdict.mild{background:#15803d}
+.verdict.moderate{background:#b45309}.verdict.severe{background:#b91c1c}.verdict.info{background:#475569}
 .verdict-label{text-transform:uppercase;font-size:.75rem;letter-spacing:.08em;opacity:.85}
 .verdict-text{font-size:1.4rem;font-weight:700}.verdict-rule{font-size:.85rem;opacity:.9;margin-top:.3rem}
 .context{color:var(--muted);font-size:.9rem}.muted{color:var(--muted)}
@@ -1061,7 +1100,7 @@ def build_report(output_path: str | Path, comparison_dir: str | Path | None = No
             section = builder()
             if section is not None:
                 sections.append(section)
-        sections.append(section_methods(run.metadata["config"]))
+        sections.append(section_methods(run.metadata["config"], run.metadata.get("task_pairs")))
         subtitle = (f"Training population ({run.metadata['n_source']:,} rows) vs new population "
                     f"({run.metadata['n_target']:,} rows) · analysis run {run.metadata['created_at']}")
         title = title or "Population drift report: is the model transferable?"

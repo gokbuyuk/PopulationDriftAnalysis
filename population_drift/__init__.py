@@ -1,7 +1,8 @@
 """Population drift toolkit.
 
 Import the public API from this package (``DriftConfig``,
-``population_drift_analyzer``, ``build_baseline``, ``run_comparison``) or from
+``population_drift_analyzer``, ``build_baseline``, ``run_comparison``,
+``run_paired_comparison``) or from
 ``population_drift.analysis``. Run the command line with
 ``python -m population_drift``.
 """

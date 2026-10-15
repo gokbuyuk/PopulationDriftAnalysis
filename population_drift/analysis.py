@@ -7,14 +7,16 @@ The module provides:
 * :func:`population_drift_analyzer`, the orchestrator that runs every task on two datasets;
 * :func:`build_baseline`, which runs the analyzer on random pairs of subsets of the
   training population to build the "natural variability" (null) reference;
-* :func:`run_comparison`, which runs training vs new population, compares every
-  statistic with the baseline and produces a traffic-light decision.
+* :func:`run_comparison`, which runs one labelled population vs the new population;
+* :func:`run_paired_comparison`, which uses a fit set and an evaluation set,
+  assigning each test to the pair that statistic can support.
 
 Command line (see README.md):
 
-    python -m population_drift baseline --train train.csv --features-file features.txt --out runs/baseline
-    python -m population_drift compare --train train.csv --new new.csv --features-file features.txt \\
-        --baseline runs/baseline --out runs/comparison --report runs/report.html
+    python -m population_drift compare --train labeled.csv --new new.csv \\
+        --features-file features.txt --out runs/comparison --report runs/report.html
+    python -m population_drift compare --train fit.csv --test evaluation.csv --new new.csv \\
+        --features-file features.txt --out runs/comparison --report runs/report.html
 """
 from __future__ import annotations
 
@@ -54,7 +56,40 @@ GLOBAL_FEATURE = "__global__"
 CONTINUOUS = "continuous"
 CATEGORICAL = "categorical"
 MIN_GROUP_ROWS = 30
-LEVEL_ORDER = {"info": -1, "green": 0, "amber": 1, "red": 2}
+LEVEL_ORDER = {"info": -1, "mild": 0, "moderate": 1, "severe": 2}
+VERDICT_TEXT = {
+    "severe": "Different: do not use the model as is",
+    "moderate": "Use with caution: mitigation and verification needed",
+    "mild": "Similar: the model can be used (with monitoring)",
+}
+_DISPLAY_METRICS = {
+    "auc": "area under the curve (AUC)",
+    "brier": "Brier score",
+    "log_loss": "log loss",
+    "rmse": "root mean squared error (RMSE)",
+    "mae": "mean absolute error (MAE)",
+    "accuracy": "accuracy",
+    "precision": "precision",
+    "recall": "recall",
+}
+ANALYSIS_SCOPES = ("all", "features", "model")
+FEATURE_TASKS = (
+    "continuous", "equivalence", "categorical", "missingness", "missingness_patterns",
+    "domain_classifier", "mmd", "energy", "correlation", "range_coverage", "joint_outliers",
+)
+MODEL_TASKS = (
+    "prediction_drift", "shap_drift", "calibration", "weighted_performance", "cbpe", "label_shift",
+)
+_SIGNAL_TASKS = (
+    ("Feature drift", "continuous"), ("Missing-value rates", "missingness"),
+    ("Unseen category levels", "categorical"), ("classifier two-sample", "domain_classifier"),
+    ("kernel/energy", "mmd"), ("Dependence structure", "correlation"),
+    ("Out-of-support", "joint_outliers"), ("Values outside", "range_coverage"),
+    ("Model score distribution", "prediction_drift"), ("Predicted positive rate", "prediction_drift"),
+    ("Model attributions", "shap_drift"), ("effective sample size", "weighted_performance"),
+    ("importance weighting", "weighted_performance"), ("CBPE", "cbpe"),
+    ("BBSE", "label_shift"), ("calibration", "calibration"),
+)
 
 
 # --------------------------------------------------------------------------------------
@@ -1392,10 +1427,38 @@ def _safe_task(failed: dict[str, str], name: str, fn: Callable[..., TaskResult],
     return result
 
 
+def task_pair_map(mode: str) -> dict[str, str]:
+    """Name the populations compared by each task.
+
+    Args:
+        mode: ``single`` uses one labelled table. ``paired`` uses a fit set and an evaluation set.
+
+    Returns:
+        Task name to the pair label stored on the run and printed in the report.
+
+    Raises:
+        ValueError: If ``mode`` is not ``single`` or ``paired``.
+    """
+    if mode not in ("single", "paired"):
+        raise ValueError(f"mode must be 'single' or 'paired', got {mode!r}.")
+    feature = "labelled set vs new" if mode == "single" else "fit set vs new"
+    scored = "labelled set vs new" if mode == "single" else "evaluation set vs new"
+    labelled_only = "labelled set" if mode == "single" else "evaluation set"
+    pairs = {task: feature for task in FEATURE_TASKS}
+    pairs.update({task: scored for task in MODEL_TASKS})
+    pairs["calibration"] = labelled_only
+    return pairs
+
+
 def population_drift_analyzer(source: pd.DataFrame, target: pd.DataFrame, feature_cols: Sequence[str],
                               categorical_cols: Sequence[str] | None = None, model: Any | None = None,
-                              label_col: str | None = None, config: DriftConfig | None = None) -> DriftAnalysisResult:
-    """Run every comparison task on two populations.
+                              label_col: str | None = None, config: DriftConfig | None = None, *,
+                              scope: str = "all") -> DriftAnalysisResult:
+    """Run comparison tasks on two populations.
+
+    ``scope="features"`` runs margins, joint structure, and support. ``scope="model"`` runs
+    scores, SHAP, calibration, and label-free performance, and stores the weighting
+    classifier as ``weight_domain`` so it does not replace the fit-set separability test.
 
     Args:
         source: Training (reference) population.
@@ -1405,10 +1468,16 @@ def population_drift_analyzer(source: pd.DataFrame, target: pd.DataFrame, featur
         model: Optional trained LightGBM model (Booster or sklearn estimator) enabling model-based tasks.
         label_col: Optional label column in ``source`` enabling calibration, weighting and BBSE.
         config: Analysis settings.
+        scope: Which tasks to run. See the summary above.
 
     Returns:
-        :class:`DriftAnalysisResult` with one :class:`TaskResult` per task.
+        :class:`DriftAnalysisResult` with one :class:`TaskResult` per task that ran.
+
+    Raises:
+        ValueError: If ``scope`` is unknown, or the inputs fail validation.
     """
+    if scope not in ANALYSIS_SCOPES:
+        raise ValueError(f"scope must be one of {ANALYSIS_SCOPES}, got {scope!r}.")
     config = config or DriftConfig()
     start = time.perf_counter()
     feature_cols = list(feature_cols)
@@ -1430,20 +1499,25 @@ def population_drift_analyzer(source: pd.DataFrame, target: pd.DataFrame, featur
             tasks[name] = result
         return result
 
-    run("continuous", compare_continuous_distributions, source, target, continuous, config)
-    run("equivalence", run_equivalence_tests, source, target, continuous, config)
-    run("categorical", compare_categorical_distributions, source, target, categorical, config)
-    run("missingness", compare_missingness, source, target, feature_cols, config)
-    run("missingness_patterns", compare_missingness_patterns, source, target, feature_cols, config)
-    domain = run("domain_classifier", classifier_two_sample_test, source, target, feature_cols, feature_types, config)
-    run("mmd", mmd_test, source, target, feature_cols, feature_types, config)
-    run("energy", energy_distance_test, source, target, feature_cols, feature_types, config)
-    run("correlation", compare_correlation_structure, source, target, continuous, config)
-    run("range_coverage", check_range_coverage, source, target, continuous, config)
-    run("joint_outliers", detect_joint_outliers, source, target, feature_cols, feature_types, config)
-
-    if model is not None:
+    domain = None
+    if scope in ("all", "features"):
+        run("continuous", compare_continuous_distributions, source, target, continuous, config)
+        run("equivalence", run_equivalence_tests, source, target, continuous, config)
+        run("categorical", compare_categorical_distributions, source, target, categorical, config)
+        run("missingness", compare_missingness, source, target, feature_cols, config)
+        run("missingness_patterns", compare_missingness_patterns, source, target, feature_cols, config)
+        domain = run("domain_classifier", classifier_two_sample_test, source, target, feature_cols, feature_types, config)
+        run("mmd", mmd_test, source, target, feature_cols, feature_types, config)
+        run("energy", energy_distance_test, source, target, feature_cols, feature_types, config)
+        run("correlation", compare_correlation_structure, source, target, continuous, config)
+        run("range_coverage", check_range_coverage, source, target, continuous, config)
+        run("joint_outliers", detect_joint_outliers, source, target, feature_cols, feature_types, config)
+    if scope == "model":
+        domain = run("domain_classifier", classifier_two_sample_test, source, target, feature_cols, feature_types, config)
+    if model is not None and scope in ("all", "model"):
         _run_model_tasks(run, failed, source, target, feature_cols, model, label_col, domain, config)
+        if scope == "model":
+            _detach_weight_domain(tasks)
 
     metadata = {
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -1456,6 +1530,15 @@ def population_drift_analyzer(source: pd.DataFrame, target: pd.DataFrame, featur
                      "scipy": scipy.__version__, "scikit-learn": sklearn.__version__, "lightgbm": lgb.__version__},
     }
     return DriftAnalysisResult(tasks, metadata)
+
+
+def _detach_weight_domain(tasks: dict[str, TaskResult]) -> None:
+    """Move the weighting classifier off the fit-set separability task name."""
+    if "domain_classifier" not in tasks:
+        return
+    weight = tasks.pop("domain_classifier")
+    weight.name = "weight_domain"
+    tasks["weight_domain"] = weight
 
 
 def _run_model_tasks(run: Callable[..., TaskResult | None], failed: dict[str, str], source: pd.DataFrame,
@@ -1536,7 +1619,7 @@ def summarize_baseline(statistics: pd.DataFrame) -> pd.DataFrame:
 def build_baseline(source: pd.DataFrame, feature_cols: Sequence[str], categorical_cols: Sequence[str] | None = None,
                    model: Any | None = None, label_col: str | None = None, n_rounds: int = 30,
                    subset_size: int | None = None, subset_fraction: float = 0.3, config: DriftConfig | None = None,
-                   output_dir: str | Path | None = None) -> BaselineResult:
+                   output_dir: str | Path | None = None, *, scope: str = "all") -> BaselineResult:
     """Build the source-vs-source null: run the analyzer on ``n_rounds`` random splits of the training data.
 
     In each round a random subset of ``subset_size`` rows plays the "new population" and the remaining
@@ -1563,7 +1646,7 @@ def build_baseline(source: pd.DataFrame, feature_cols: Sequence[str], categorica
         order = rng.permutation(n)
         pseudo_new, reference = source.iloc[order[:size]], source.iloc[order[size:]]
         result = population_drift_analyzer(reference, pseudo_new, feature_cols, categorical_cols, model, label_col,
-                                           dataclasses.replace(round_config, seed=config.seed + r + 1))
+                                           dataclasses.replace(round_config, seed=config.seed + r + 1), scope=scope)
         feature_types = result.metadata["feature_types"]
         long = collect_comparable_metrics(result)
         long.insert(0, "round", r)
@@ -1577,6 +1660,7 @@ def build_baseline(source: pd.DataFrame, feature_cols: Sequence[str], categorica
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "n_rounds": n_rounds,
         "subset_size": size, "n_source": n, "feature_cols": list(feature_cols), "feature_types": feature_types,
         "categorical_cols": list(categorical_cols or []), "label_col": label_col, "has_model": model is not None,
+        "scope": scope,
         "config": dataclasses.asdict(config), "failed_task_counts": failed_counts,
     }
     baseline = BaselineResult(statistics, summary, metadata)
@@ -1657,7 +1741,7 @@ def _beyond_baseline(lookup: dict, task: str, feature: str, metrics: Sequence[st
 def _worst(levels: Sequence[str]) -> str:
     """Most severe of a set of traffic-light levels."""
     levels = [level for level in levels if level in LEVEL_ORDER and level != "info"]
-    return max(levels, key=LEVEL_ORDER.get) if levels else "green"
+    return max(levels, key=LEVEL_ORDER.get) if levels else "mild"
 
 
 def _value(table: pd.DataFrame, column: str, default: float = np.nan) -> float:
@@ -1671,9 +1755,9 @@ def _value(table: pd.DataFrame, column: str, default: float = np.nan) -> float:
 def assess_features(result: DriftAnalysisResult, lookup: dict, config: DriftConfig) -> pd.DataFrame:
     """Per-feature severity combining significance, effect size, baseline position and model importance.
 
-    * red: significant (adjusted p < alpha), beyond the baseline, and a large effect.
-    * amber: significant, beyond the baseline, and at least a moderate effect.
-    * green: otherwise (including statistically detectable but negligible differences).
+    * severe: significant (adjusted p < alpha), beyond the baseline, and a large effect.
+    * moderate: significant, beyond the baseline, and at least a moderate effect.
+    * mild: otherwise (including statistically detectable but negligible differences).
     Without a model every feature is treated as important (conservative).
     """
     th, alpha = config.thresholds, config.alpha
@@ -1686,7 +1770,7 @@ def assess_features(result: DriftAnalysisResult, lookup: dict, config: DriftConf
     rows = []
     for feature in result.metadata["feature_cols"]:
         ftype = feature_types[feature]
-        row = {"feature": feature, "type": ftype, "severity": "green", "important": True,
+        row = {"feature": feature, "type": ftype, "severity": "mild", "important": True,
                "model_importance_share": np.nan, "significant": False, "beyond_baseline": False,
                "psi": np.nan, "ks_d": np.nan, "smd": np.nan, "cramers_v": np.nan, "equivalent_mean": None,
                "reasons": ""}
@@ -1706,7 +1790,9 @@ def assess_features(result: DriftAnalysisResult, lookup: dict, config: DriftConf
                         "beyond_baseline": bool(beyond)})
             if equivalence is not None and feature in equivalence.index:
                 row["equivalent_mean"] = bool(equivalence.loc[feature, "equivalent"])
-            reasons += [f"PSI={psi:.3f}", f"KS D={ks_d:.3f}", f"SMD={stat['smd']:+.2f}"]
+            reasons += [f"Population Stability Index (PSI)={psi:.3f}",
+                        f"Kolmogorov–Smirnov statistic (KS D)={ks_d:.3f}",
+                        f"standardized mean difference (SMD)={stat['smd']:+.2f}"]
             if np.isfinite(stat.get("var_ratio", np.nan)):
                 reasons.append(f"var ratio={stat['var_ratio']:.2f}")
         elif ftype == CATEGORICAL and categorical is not None and feature in categorical.index \
@@ -1718,26 +1804,26 @@ def assess_features(result: DriftAnalysisResult, lookup: dict, config: DriftConf
             large = psi >= th.psi_major or v >= th.cramers_v_major
             moderate = psi >= th.psi_moderate or v >= th.cramers_v_moderate or unseen > th.unseen_level_share
             row.update({"psi": psi, "cramers_v": v, "significant": bool(significant), "beyond_baseline": bool(beyond)})
-            reasons += [f"PSI={psi:.3f}", f"Cramér's V={v:.3f}"]
+            reasons += [f"Population Stability Index (PSI)={psi:.3f}", f"Cramér's V={v:.3f}"]
             if unseen > 0:
                 reasons.append(f"unseen levels={unseen:.1%}")
         else:
             significant = beyond = large = moderate = False
             reasons.append("distribution not tested (insufficient data)")
         if significant and beyond and large:
-            row["severity"] = "red"
+            row["severity"] = "severe"
         elif significant and beyond and moderate:
-            row["severity"] = "amber"
+            row["severity"] = "moderate"
         if reasons and not reasons[-1].startswith("distribution not tested"):
             reasons.append("adj. p<α" if significant else "not significant")
             reasons.append("beyond baseline" if beyond else "within baseline")
         if row["equivalent_mean"]:
-            reasons.append("means equivalent (TOST)")
+            reasons.append("means equivalent (two one-sided tests, TOST)")
         if missing is not None and feature in missing.index:
             miss = missing.loc[feature]
             if (miss["cohens_h_abs"] >= th.cohens_h_small and miss["z_p_adj"] < alpha
                     and _beyond_baseline(lookup, "missingness", feature, ["cohens_h_abs"])):
-                miss_level = "red" if miss["cohens_h_abs"] >= th.cohens_h_large else "amber"
+                miss_level = "severe" if miss["cohens_h_abs"] >= th.cohens_h_large else "moderate"
                 row["severity"] = _worst([row["severity"], miss_level])
                 row["significant"] = row["beyond_baseline"] = True
                 reasons.append(f"missing rate {miss['missing_rate_source']:.1%}→{miss['missing_rate_target']:.1%} "
@@ -1758,8 +1844,8 @@ def _performance_signal(name: str, table: pd.DataFrame, metric: str, config: Dri
     """Traffic light for an estimated metric against ``performance_tolerance`` (absolute for AUC,
     relative for regression error metrics).
 
-    red: the whole 95% CI is beyond tolerance; amber: the point estimate is beyond tolerance, or the CI
-    crosses it while the point degradation exceeds half the tolerance; green otherwise. A wide CI alone
+    severe: the whole 95% CI is beyond tolerance; moderate: the point estimate is beyond tolerance, or the CI
+    crosses it while the point degradation exceeds half the tolerance; mild otherwise. A wide CI alone
     is reported as imprecision, not as degradation.
     """
     if table.empty or metric not in set(table["metric"]):
@@ -1776,24 +1862,25 @@ def _performance_signal(name: str, table: pd.DataFrame, metric: str, config: Dri
     degradation = reference - estimate if higher_is_better else estimate - reference
     crosses = has_ci and worse(ci_worst)
     if has_ci and worse(ci_best):
-        level = "red"
+        level = "severe"
     elif worse(estimate) or (crosses and degradation > tolerance / 2):
-        level = "amber"
+        level = "moderate"
     else:
-        level = "green"
-    ci_text = f" [95% CI {low:.3f}–{high:.3f}]" if has_ci else ""
-    detail = f"Tolerance {tolerance:.3f}; red only if the whole CI is beyond tolerance."
-    if crosses and level == "green":
-        detail += " CI is wide relative to the tolerance (imprecise estimate)."
-    return _signal(name, level, f"{metric} {estimate:.3f}{ci_text} vs reference {reference:.3f}", detail)
+        level = "mild"
+    ci_text = f" [95% confidence interval (CI) {low:.3f}–{high:.3f}]" if has_ci else ""
+    detail = f"Tolerance {tolerance:.3f}; severe only if the whole confidence interval (CI) is beyond tolerance."
+    if crosses and level == "mild":
+        detail += " The confidence interval (CI) is wide relative to the tolerance (imprecise estimate)."
+    shown = _DISPLAY_METRICS.get(str(metric), str(metric))
+    return _signal(name, level, f"{shown} {estimate:.3f}{ci_text} vs reference {reference:.3f}", detail)
 
 
 def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataFrame | None,
                       config: DriftConfig) -> dict[str, Any]:
     """Traffic-light signals and an overall verdict following the decision framework.
 
-    Verdict: red if any red signal; green if no red, at most two amber signals and none involving
-    model-important features; amber otherwise. ``info`` signals are reported but not counted.
+    Verdict: severe if any severe signal; mild if no severe, at most two moderate signals and none involving
+    model-important features; moderate otherwise. ``info`` signals are reported but not counted.
     """
     th, alpha = config.thresholds, config.alpha
     lookup = _baseline_lookup(baseline_comparison)
@@ -1804,18 +1891,18 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
     important = features[features["important"]]
     other = features[~features["important"]]
     label = "model-important features" if has_model else "all features (no model supplied)"
-    flagged = important[important["severity"] != "green"]
+    flagged = important[important["severity"] != "mild"]
     signals.append(_signal(f"Feature drift: {label}", _worst(important["severity"]),
-                           f"{(important.severity == 'red').sum()} red, {(important.severity == 'amber').sum()} amber "
+                           f"{(important.severity == 'severe').sum()} severe, {(important.severity == 'moderate').sum()} moderate "
                            f"of {len(important)}",
                            ", ".join(f"{r.feature} ({r.severity})" for r in flagged.itertuples()) or "none flagged",
                            important=True))
     if has_model and len(other):
-        level = "amber" if (other["severity"] != "green").any() else "green"
-        flagged = other[other["severity"] != "green"]
+        level = "moderate" if (other["severity"] != "mild").any() else "mild"
+        flagged = other[other["severity"] != "mild"]
         signals.append(_signal("Feature drift: low-importance features", level,
                                f"{len(flagged)} of {len(other)} flagged",
-                               (", ".join(flagged["feature"]) or "none flagged") + " (capped at amber: low impact)"))
+                               (", ".join(flagged["feature"]) or "none flagged") + " (capped at moderate: low impact)"))
 
     missing = result.table("missingness")
     if not missing.empty:
@@ -1823,11 +1910,11 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
         flagged = flagged[np.array([_beyond_baseline(lookup, "missingness", f, ["cohens_h_abs"])
                                     for f in flagged["feature"]], dtype=bool)]
         important_set = set(important["feature"])
-        level = "green"
+        level = "mild"
         if len(flagged):
-            level = "amber"
+            level = "moderate"
             if ((flagged["cohens_h_abs"] >= th.cohens_h_large) & flagged["feature"].isin(important_set)).any():
-                level = "red"
+                level = "severe"
         signals.append(_signal("Missing-value rates", level, f"{len(flagged)} feature(s) with |h| ≥ {th.cohens_h_small}",
                                ", ".join(f"{r.feature} ({r.missing_rate_source:.1%}→{r.missing_rate_target:.1%})"
                                          for r in flagged.itertuples()) or "no material change",
@@ -1836,7 +1923,7 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
     categorical = result.table("categorical")
     if not categorical.empty and "unseen_share" in categorical:
         flagged = categorical[categorical["unseen_share"] > th.unseen_level_share]
-        signals.append(_signal("Unseen category levels", "amber" if len(flagged) else "green",
+        signals.append(_signal("Unseen category levels", "moderate" if len(flagged) else "mild",
                                f"{len(flagged)} feature(s) > {th.unseen_level_share:.0%} of rows",
                                ", ".join(f"{r.feature} ({r.unseen_share:.1%})" for r in flagged.itertuples())
                                or "none"))
@@ -1846,20 +1933,21 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
         auc = _value(domain, "auc")
         within = not _beyond_baseline(lookup, "domain_classifier", GLOBAL_FEATURE, ["auc"])
         if within or auc <= th.domain_auc_mild:
-            level = "green"
+            level = "mild"
         elif auc <= th.domain_auc_strong:
-            level = "amber"
+            level = "moderate"
         else:
-            level = "red"
+            level = "severe"
         p_text = _value(domain, "permutation_p")
         p_text = f"permutation p={p_text:.3f}" if np.isfinite(p_text) else f"Mann-Whitney p={_value(domain, 'mannwhitney_p'):.2g}"
         drivers = result.table("domain_classifier", "importance").head(3)["feature"].tolist()
         signals.append(_signal("Joint distribution: classifier two-sample test", level,
-                               f"AUC {auc:.3f} ({p_text})",
+                               f"area under the curve (AUC) {auc:.3f} ({p_text})",
                                ("within baseline" if within else "beyond baseline") + f"; top drivers: {', '.join(drivers)}"))
 
     kernel_tests = [(task, metric, label_text) for task, metric, label_text in
-                    (("mmd", "mmd2", "MMD²"), ("energy", "energy_distance", "energy")) if not result.table(task).empty]
+                    (("mmd", "mmd2", "squared maximum mean discrepancy (MMD²)"),
+                     ("energy", "energy_distance", "energy")) if not result.table(task).empty]
     kernel_flags, kernel_values = [], []
     for task, metric, label_text in kernel_tests:
         table = result.table(task)
@@ -1869,9 +1957,9 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
         kernel_flags.append(beyond and significant)
         kernel_values.append(f"{label_text} {_value(table, metric):.4f} (p={p_value:.3f})")
     if kernel_values:
-        signals.append(_signal("Joint distribution: kernel/energy tests", "amber" if any(kernel_flags) else "green",
+        signals.append(_signal("Joint distribution: kernel/energy tests", "moderate" if any(kernel_flags) else "mild",
                                "; ".join(kernel_values),
-                               f"Permutation tests (Bonferroni over {len(kernel_tests)}); amber when significant "
+                               f"Permutation tests (Bonferroni over {len(kernel_tests)}); moderate when significant "
                                "and beyond baseline"))
 
     correlation, pairs = result.table("correlation"), result.table("correlation", "pairs")
@@ -1883,7 +1971,7 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
         pair_flags = pairs[(pairs["abs_delta"] > th.correlation_pair_delta) & (pairs["fisher_z_p_adj"] < alpha)
                            & pairs["feature_a"].isin(important_set) & pairs["feature_b"].isin(important_set)]
         signals.append(_signal("Dependence structure (Spearman)",
-                               "amber" if global_flag or len(pair_flags) else "green",
+                               "moderate" if global_flag or len(pair_flags) else "mild",
                                f"Frobenius {_value(correlation, 'frobenius'):.3f} (p={p_value:.3f})",
                                ", ".join(f"{r.feature_a}–{r.feature_b} Δρ={r.delta:+.2f}" for r in pair_flags.head(5).itertuples())
                                or "no material pairwise change among important features"))
@@ -1893,9 +1981,9 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
         share = _value(outliers, "ood_share")
         within = not _beyond_baseline(lookup, "joint_outliers", GLOBAL_FEATURE, ["ood_share"])
         if within or share < th.ood_share_caution:
-            level = "green"
+            level = "mild"
         else:
-            level = "amber" if share <= th.ood_share_material else "red"
+            level = "moderate" if share <= th.ood_share_material else "severe"
         signals.append(_signal("Out-of-support rows (Isolation Forest)", level,
                                f"{share:.1%} of target rows (expected {config.ood_quantile:.0%})",
                                f"binomial p={_value(outliers, 'binomial_p'):.3g}; "
@@ -1907,7 +1995,7 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
         flagged = flagged[np.array([_beyond_baseline(lookup, "range_coverage", f, ["outside_share"])
                                     for f in flagged["feature"]], dtype=bool)]
         important_flags = flagged[flagged["feature"].isin(set(important["feature"]))]
-        signals.append(_signal("Values outside the training range", "amber" if len(important_flags) else "green",
+        signals.append(_signal("Values outside the training range", "moderate" if len(important_flags) else "mild",
                                f"{len(flagged)} feature(s) > {th.range_outside_ratio:g}× expected",
                                ", ".join(f"{r.feature} ({r.outside_share:.1%})" for r in flagged.itertuples()) or "none",
                                important=bool(len(important_flags))))
@@ -1916,12 +2004,14 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
     if not prediction.empty:
         psi = _value(prediction, "psi")
         within = not _beyond_baseline(lookup, "prediction_drift", GLOBAL_FEATURE, ["psi", "ks_d"])
-        level = "green" if within or psi < th.psi_moderate else "amber" if psi <= th.psi_major else "red"
-        signals.append(_signal("Model score distribution", level, f"score PSI {psi:.3f}, KS D {_value(prediction, 'ks_d'):.3f}",
+        level = "mild" if within or psi < th.psi_moderate else "moderate" if psi <= th.psi_major else "severe"
+        signals.append(_signal("Model score distribution", level,
+                               f"score Population Stability Index (PSI) {psi:.3f}, "
+                               f"Kolmogorov–Smirnov statistic (KS D) {_value(prediction, 'ks_d'):.3f}",
                                "within baseline" if within else "beyond baseline", important=True))
         if config.problem_type == "binary":
             h, p_value = _value(prediction, "positive_rate_cohens_h_abs"), _value(prediction, "positive_rate_p")
-            signals.append(_signal("Predicted positive rate", "amber" if h >= th.cohens_h_small and p_value < alpha else "green",
+            signals.append(_signal("Predicted positive rate", "moderate" if h >= th.cohens_h_small and p_value < alpha else "mild",
                                    f"{_value(prediction, 'positive_rate_source'):.1%} → {_value(prediction, 'positive_rate_target'):.1%}",
                                    f"Cohen's h={h:.2f}, p={p_value:.3g}"))
 
@@ -1932,61 +2022,81 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
                              & (shap_table["shap_ks_d"] >= th.ks_moderate)]
         flagged = flagged[np.array([_beyond_baseline(lookup, "shap_drift", f, ["shap_ks_d"])
                                     for f in flagged["feature"]], dtype=bool)]
-        level = "amber" if (np.isfinite(rho) and rho < th.importance_rank_rho) or len(flagged) else "green"
-        signals.append(_signal("Model attributions (SHAP)", level,
-                               f"importance rank ρ={rho:.2f}; {len(flagged)} important feature(s) with shifted SHAP",
+        level = "moderate" if (np.isfinite(rho) and rho < th.importance_rank_rho) or len(flagged) else "mild"
+        signals.append(_signal("Model attributions (Shapley additive explanations, SHAP)", level,
+                               f"importance rank ρ={rho:.2f}; {len(flagged)} important feature(s) with shifted "
+                               "Shapley additive explanations (SHAP)",
                                ", ".join(flagged["feature"]) or "no material attribution shift on important features",
                                important=bool(len(flagged))))
 
     weighted_summary = result.table("weighted_performance", "summary")
     if not weighted_summary.empty:
         ratio = _value(weighted_summary, "ess_ratio")
-        level = "green" if ratio > th.ess_ratio_good else "amber" if ratio >= th.ess_ratio_poor else "red"
-        signals.append(_signal("Population overlap (effective sample size)", level, f"ESS ratio {ratio:.2f}",
-                               f"ESS {_value(weighted_summary, 'ess'):.0f} of {_value(weighted_summary, 'n_rows'):.0f} source rows"))
+        level = "mild" if ratio > th.ess_ratio_good else "moderate" if ratio >= th.ess_ratio_poor else "severe"
+        signals.append(_signal("Population overlap (effective sample size)", level,
+                               f"effective sample size (ESS) ratio {ratio:.2f}",
+                               f"effective sample size (ESS) {_value(weighted_summary, 'ess'):.0f} of "
+                               f"{_value(weighted_summary, 'n_rows'):.0f} source rows"))
     primary = "auc" if config.problem_type == "binary" else "rmse"
     weighted_signal = _performance_signal("Estimated performance: importance weighting",
                                           result.table("weighted_performance"), primary, config)
     if weighted_signal:
         signals.append(weighted_signal)
-    cbpe_signal = _performance_signal("Estimated performance: CBPE", result.table("cbpe"), "auc", config)
+    cbpe_signal = _performance_signal(
+        "Estimated performance: confidence-based performance estimation (CBPE)", result.table("cbpe"), "auc", config)
     if cbpe_signal:
         ece = _value(result.table("calibration"), "ece")
         if np.isfinite(ece) and ece > th.ece_max:
             cbpe_signal["level"] = "info"
-            cbpe_signal["detail"] = f"Unreliable: model miscalibrated on source (ECE {ece:.3f} > {th.ece_max})."
+            cbpe_signal["detail"] = (
+                f"Unreliable: model miscalibrated on source (expected calibration error (ECE) {ece:.3f} > {th.ece_max}).")
         signals.append(cbpe_signal)
     label_shift = result.table("label_shift")
     if not label_shift.empty:
         shifted = bool(label_shift["prior_shift_detected"].iloc[0])
-        signals.append(_signal("Class prior (BBSE)", "amber" if shifted else "green",
+        signals.append(_signal("Class prior (black-box shift estimation, BBSE)", "moderate" if shifted else "mild",
                                f"{_value(label_shift, 'source_prevalence'):.1%} → "
                                f"{_value(label_shift, 'target_prevalence_estimate'):.1%} "
                                f"[{_value(label_shift, 'ci_low'):.1%}–{_value(label_shift, 'ci_high'):.1%}]",
                                ("Recalibrate intercept/threshold if shifted. " if shifted else
                                 "CI includes source prevalence. ")
-                               + "Valid only if P(x|y) is unchanged; under covariate shift prefer the CBPE and "
-                                 "importance-weighted estimates."))
+                               + "Valid only if P(x|y) is unchanged; under covariate shift prefer the "
+                                 "confidence-based performance estimation (CBPE) and importance-weighted estimates."))
     calibration = result.table("calibration")
     if not calibration.empty:
-        signals.append(_signal("Source calibration (prerequisite for CBPE)", "info",
-                               f"ECE {_value(calibration, 'ece'):.3f}, slope {_value(calibration, 'calibration_slope'):.2f}",
+        signals.append(_signal(
+            "Source calibration (prerequisite for confidence-based performance estimation, CBPE)", "info",
+            f"expected calibration error (ECE) {_value(calibration, 'ece'):.3f}, "
+            f"slope {_value(calibration, 'calibration_slope'):.2f}",
                                "Computed on the training population; optimistic if these rows were used for training."))
 
     counted = [s for s in signals if s["level"] != "info"]
-    n_red = sum(s["level"] == "red" for s in counted)
-    n_amber = sum(s["level"] == "amber" for s in counted)
-    amber_important = any(s["level"] == "amber" and s["important"] for s in counted)
-    if n_red:
-        verdict_level, verdict = "red", "Different: do not use the model as is"
-    elif n_amber <= 2 and not amber_important:
-        verdict_level, verdict = "green", "Similar: the model can be used (with monitoring)"
+    n_severe = sum(s["level"] == "severe" for s in counted)
+    n_moderate = sum(s["level"] == "moderate" for s in counted)
+    moderate_important = any(s["level"] == "moderate" and s["important"] for s in counted)
+    if n_severe:
+        verdict_level = "severe"
+    elif n_moderate <= 2 and not moderate_important:
+        verdict_level = "mild"
     else:
-        verdict_level, verdict = "amber", "Use with caution: mitigation and verification needed"
-    rule = ("red if any red signal; green if no red, ≤2 amber and none on model-important features; amber otherwise. "
-            "Concept shift (change in P(y|x)) cannot be assessed without labels.")
-    return {"verdict": verdict, "verdict_level": verdict_level, "verdict_rule": rule, "n_red": n_red,
-            "n_amber": n_amber, "signals": signals, "feature_assessment": features}
+        verdict_level = "moderate"
+    verdict = VERDICT_TEXT[verdict_level]
+    rule = ("severe if any severe signal; mild if no severe, ≤2 moderate and none on model-important features; moderate otherwise. "
+            "Whether a given feature vector still maps to the same label cannot be assessed without labels.")
+    _attach_pairs(signals, result.metadata.get("task_pairs", {}))
+    return {"verdict": verdict, "verdict_level": verdict_level, "verdict_rule": rule, "n_severe": n_severe,
+            "n_moderate": n_moderate, "signals": signals, "feature_assessment": features}
+
+
+def _attach_pairs(signals: list[dict[str, Any]], task_pairs: dict[str, str]) -> None:
+    """Record the population pair on each signal."""
+    if not task_pairs:
+        return
+    for signal in signals:
+        for needle, task in _SIGNAL_TASKS:
+            if needle in signal["signal"]:
+                signal["pair"] = task_pairs[task]
+                break
 
 
 # --------------------------------------------------------------------------------------
@@ -2019,8 +2129,9 @@ def run_comparison(source: pd.DataFrame, target: pd.DataFrame, feature_cols: Seq
         if not 0.5 <= ratio <= 2.0:
             run_warnings.append(
                 f"New population has {len(target)} rows but the baseline used subsets of "
-                f"{baseline.metadata['subset_size']} rows (ratio {ratio:.2f}). Size-dependent statistics (PSI, KS D, "
-                "classifier AUC) are not directly comparable; rebuild the baseline with --subset-size "
+                f"{baseline.metadata['subset_size']} rows (ratio {ratio:.2f}). Size-dependent statistics "
+                "(Population Stability Index (PSI), Kolmogorov–Smirnov statistic (KS D), "
+                "classifier area under the curve (AUC)) are not directly comparable; rebuild the baseline with --subset-size "
                 f"{len(target)}.")
     else:
         size = min(len(target), len(source) // 2)
@@ -2036,8 +2147,21 @@ def run_comparison(source: pd.DataFrame, target: pd.DataFrame, feature_cols: Seq
         run_warnings.append("Baseline and comparison differ in whether a model was supplied; model-based "
                             "metrics have no baseline reference.")
 
-    logger.info("Running full analysis: training (%d rows) vs new population (%d rows)", len(source), len(target))
+    logger.info("Running full analysis: labelled set (%d rows) vs new population (%d rows)", len(source), len(target))
     result = population_drift_analyzer(source, target, feature_cols, categorical_cols, model, label_col, config)
+    _stamp_reference(result, "single")
+    return _emit_decision(result, baseline, baseline_dir, output_dir, config, run_warnings)
+
+
+def _stamp_reference(result: DriftAnalysisResult, mode: str) -> None:
+    """Record which populations each task compared."""
+    result.metadata["reference_mode"] = mode
+    result.metadata["task_pairs"] = task_pair_map(mode)
+
+
+def _emit_decision(result: DriftAnalysisResult, baseline: BaselineResult, baseline_dir: str | Path,
+                   output_dir: Path, config: DriftConfig, run_warnings: list[str]) -> dict[str, Any]:
+    """Save the tables, score them against the baseline, and write ``decision.json``."""
     save_analysis(result, output_dir)
     comparison = compare_to_baseline(collect_comparable_metrics(result), baseline.statistics,
                                      config.thresholds.baseline_percentile)
@@ -2046,29 +2170,151 @@ def run_comparison(source: pd.DataFrame, target: pd.DataFrame, feature_cols: Seq
     decision["feature_assessment"].to_csv(output_dir / "feature_assessment.csv", index=False)
     if result.metadata["failed_tasks"]:
         run_warnings.append(f"Tasks that failed: {result.metadata['failed_tasks']}")
-    decision_json = {key: value for key, value in decision.items() if key != "feature_assessment"}
-    decision_json.update({"warnings": run_warnings, "baseline_dir": str(baseline_dir),
-                          "baseline_rounds": baseline.metadata["n_rounds"],
-                          "baseline_subset_size": baseline.metadata["subset_size"]})
-    write_json(decision_json, output_dir / "decision.json")
+    payload = {key: value for key, value in decision.items() if key != "feature_assessment"}
+    payload.update({"warnings": run_warnings, "baseline_dir": str(baseline_dir),
+                    "baseline_rounds": baseline.metadata["n_rounds"],
+                    "baseline_subset_size": baseline.metadata["subset_size"],
+                    "reference_mode": result.metadata.get("reference_mode", "single"),
+                    "task_pairs": result.metadata.get("task_pairs", {})})
+    write_json(payload, output_dir / "decision.json")
     print(format_console_summary(decision, run_warnings))
     return decision
 
 
+def run_paired_comparison(fit_set: pd.DataFrame, evaluation: pd.DataFrame, new: pd.DataFrame,
+                          feature_cols: Sequence[str], categorical_cols: Sequence[str] | None = None,
+                          model: Any | None = None, label_col: str | None = None,
+                          config: DriftConfig | None = None, output_dir: str | Path = "drift_runs/comparison",
+                          n_baseline_rounds: int = 30) -> dict[str, Any]:
+    """Compare the new population with a fit set and an evaluation set.
+
+    Feature, joint, and support tests use the fit set. Score, attribution, and
+    label-free performance tests use the evaluation set. Calibration uses the
+    evaluation labels. Each reference gets its own size-matched baseline.
+
+    Args:
+        fit_set: Rows the model was fitted on.
+        evaluation: Rows the model was scored on and was not fitted on.
+        new: Unlabelled population.
+        feature_cols: Model inputs. The label is rejected.
+        categorical_cols: Columns treated as categorical.
+        model: Fitted model, or None for feature-only checks.
+        label_col: Label on the evaluation set.
+        config: Run configuration.
+        output_dir: Directory for the merged comparison and the baseline.
+        n_baseline_rounds: Rounds in each reference's baseline.
+
+    Returns:
+        Decision dictionary. Each signal has a ``pair`` field.
+
+    Raises:
+        ValueError: If columns are missing or a reference has fewer than ``len(new) + 30`` rows.
+    """
+    config = config or DriftConfig()
+    output_dir = Path(output_dir)
+    _validate_paired(fit_set, evaluation, new, feature_cols, label_col)
+    baseline_dir = output_dir / "baseline"
+    baseline = _paired_baseline(fit_set, evaluation, new, feature_cols, categorical_cols, model, label_col,
+                                config, n_baseline_rounds, baseline_dir)
+    result = _paired_analysis(fit_set, evaluation, new, feature_cols, categorical_cols, model, label_col, config)
+    return _emit_decision(result, baseline, baseline_dir, output_dir, config, [])
+
+
+def _validate_paired(fit_set: pd.DataFrame, evaluation: pd.DataFrame, new: pd.DataFrame,
+                     feature_cols: Sequence[str], label_col: str | None) -> None:
+    """Reject inputs that cannot support the two-reference assignment."""
+    if not feature_cols:
+        raise ValueError("feature_cols is empty.")
+    if label_col and label_col in feature_cols:
+        raise ValueError(f"Leave the label column '{label_col}' out of the feature list.")
+    _require_columns(fit_set, feature_cols, "Fit set")
+    _require_columns(evaluation, feature_cols, "Evaluation set")
+    _require_columns(new, feature_cols, "New population")
+    if label_col and label_col not in evaluation.columns:
+        raise ValueError(f"Evaluation set has no label column '{label_col}'.")
+    _require_reference_size("Fit set", len(fit_set), len(new))
+    _require_reference_size("Evaluation set", len(evaluation), len(new))
+
+
+def _require_columns(frame: pd.DataFrame, columns: Sequence[str], name: str) -> None:
+    """Raise if ``frame`` does not contain every name in ``columns``."""
+    missing = [col for col in columns if col not in frame.columns]
+    if missing:
+        raise ValueError(f"{name} is missing columns: {missing}.")
+
+
+def _require_reference_size(name: str, n_reference: int, n_new: int) -> None:
+    """Require a reference large enough for a baseline matched to ``n_new``."""
+    if n_new < MIN_GROUP_ROWS:
+        raise ValueError(f"The new population has {n_new} rows; at least {MIN_GROUP_ROWS} are required.")
+    minimum = n_new + MIN_GROUP_ROWS
+    if n_reference < minimum:
+        raise ValueError(f"{name} has {n_reference} rows. A baseline matched to {n_new} new rows needs at least {minimum}.")
+
+
+def _paired_baseline(fit_set: pd.DataFrame, evaluation: pd.DataFrame, new: pd.DataFrame, feature_cols: Sequence[str],
+                     categorical_cols: Sequence[str] | None, model: Any | None, label_col: str | None,
+                     config: DriftConfig, n_rounds: int, output_dir: Path) -> BaselineResult:
+    """Size-matched baselines for the fit-set tests and the evaluation-set tests."""
+    _warn_if_new_exceeds_half("Fit set", len(fit_set), len(new))
+    _warn_if_new_exceeds_half("Evaluation set", len(evaluation), len(new))
+    fit_base = build_baseline(fit_set, feature_cols, categorical_cols, None, None, n_rounds,
+                              subset_size=len(new), config=config, scope="features")
+    eval_base = build_baseline(evaluation, feature_cols, categorical_cols, model, label_col, n_rounds,
+                               subset_size=len(new), config=config, scope="model")
+    statistics = pd.concat([fit_base.statistics, eval_base.statistics], ignore_index=True)
+    metadata = dict(eval_base.metadata)
+    metadata.update({"n_source": len(fit_set), "n_source_fit": len(fit_set), "n_source_evaluation": len(evaluation),
+                     "has_model": model is not None, "scope": "paired", "feature_cols": list(feature_cols)})
+    baseline = BaselineResult(statistics, summarize_baseline(statistics), metadata)
+    save_baseline(baseline, output_dir)
+    return baseline
+
+
+def _warn_if_new_exceeds_half(name: str, n_reference: int, n_new: int) -> None:
+    """Warn when a baseline round would hold out more rows than it keeps."""
+    if n_new > n_reference / 2:
+        logger.warning("%s has %d rows and the new population has %d. Baseline rounds then hold out more rows than they keep.",
+                       name, n_reference, n_new)
+
+
+def _paired_analysis(fit_set: pd.DataFrame, evaluation: pd.DataFrame, new: pd.DataFrame, feature_cols: Sequence[str],
+                     categorical_cols: Sequence[str] | None, model: Any | None, label_col: str | None,
+                     config: DriftConfig) -> DriftAnalysisResult:
+    """Run feature tests on the fit set and score tests on the evaluation set."""
+    logger.info("Feature tests use the fit set (%d rows). Score and performance tests use the evaluation set (%d rows).",
+                len(fit_set), len(evaluation))
+    feature = population_drift_analyzer(fit_set, new, feature_cols, categorical_cols, None, None, config, scope="features")
+    scored = population_drift_analyzer(evaluation, new, feature_cols, categorical_cols, model, label_col, config,
+                                       scope="model")
+    tasks = {name: task for name, task in feature.tasks.items()}
+    tasks.update({name: task for name, task in scored.tasks.items() if name != "schema"})
+    metadata = dict(feature.metadata)
+    metadata["failed_tasks"] = {**feature.metadata["failed_tasks"], **scored.metadata["failed_tasks"]}
+    metadata.update({"has_model": model is not None, "label_col": label_col, "n_fit": len(fit_set),
+                     "n_evaluation": len(evaluation), "n_target": len(new),
+                     "elapsed_seconds": round(feature.metadata["elapsed_seconds"] + scored.metadata["elapsed_seconds"], 2)})
+    result = DriftAnalysisResult(tasks, metadata)
+    _stamp_reference(result, "paired")
+    return result
+
+
 def format_console_summary(decision: dict[str, Any], run_warnings: Sequence[str] = ()) -> str:
     """Plain-text summary of the verdict, signals and flagged features."""
-    symbols = {"green": "[ OK ]", "amber": "[WARN]", "red": "[FAIL]", "info": "[INFO]"}
+    symbols = {"mild": "[mild]", "moderate": "[moderate]", "severe": "[severe]", "info": "[info]"}
     lines = ["", "=" * 100, f"VERDICT: {decision['verdict']}  ({decision['verdict_level'].upper()})",
              f"Rule: {decision['verdict_rule']}", "=" * 100]
     for signal in decision["signals"]:
-        lines.append(f"{symbols[signal['level']]} {signal['signal']}: {signal['value']}")
+        pair = f" [{signal['pair']}]" if signal.get("pair") else ""
+        lines.append(f"{symbols[signal['level']]} {signal['signal']}{pair}: {signal['value']}")
         lines.append(f"       {signal['detail']}")
     features = decision["feature_assessment"]
-    flagged = features[features["severity"] != "green"]
+    flagged = features[features["severity"] != "mild"]
     lines.append("-" * 100)
     lines.append(f"Flagged features: {len(flagged)} of {len(features)}")
     for row in flagged.itertuples():
-        lines.append(f"  {row.severity.upper():5s} {row.feature} ({row.type}"
+        prefix = f"{row.reference} " if "reference" in features.columns else ""
+        lines.append(f"  {row.severity.upper():5s} {prefix}{row.feature} ({row.type}"
                      f"{', model-important' if row.important else ''}): {row.reasons}")
     for message in run_warnings:
         lines.append(f"WARNING: {message}")
@@ -2088,7 +2334,7 @@ def format_baseline_summary(baseline: BaselineResult) -> str:
         lines.append(f"  {row.task + '.' + row.metric:45s} {row.p50:10.4f} / {row.p95:10.4f}")
     per_feature = summary[(summary["metric"] == "psi") & (summary["task"].isin(["continuous", "categorical"]))]
     if not per_feature.empty:
-        lines.append(f"  Feature PSI 95th percentile: median {per_feature['p95'].median():.4f}, "
+        lines.append(f"  Feature Population Stability Index (PSI) 95th percentile: median {per_feature['p95'].median():.4f}, "
                      f"max {per_feature['p95'].max():.4f} ({per_feature.loc[per_feature['p95'].idxmax(), 'feature']})")
     lines.append("=" * 80)
     return "\n".join(lines)
@@ -2129,7 +2375,8 @@ def resolve_features(args: argparse.Namespace, source: pd.DataFrame, target: pd.
 def build_parser() -> argparse.ArgumentParser:
     """Argument parser with ``baseline`` and ``compare`` sub-commands."""
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--train", required=True, help="Training population (csv/parquet/feather).")
+    common.add_argument("--train", required=True,
+                        help="Labelled table (csv/parquet/feather). Used as given. Pass --test for a separate evaluation set.")
     common.add_argument("--features", help="Comma-separated feature columns.")
     common.add_argument("--features-file", help="Text file with one feature name per line.")
     common.add_argument("--exclude", help="Columns to exclude when no feature list is given (IDs, dates).")
@@ -2154,10 +2401,12 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("--out", required=True, help="Output directory for the baseline.")
     baseline.add_argument("--subset-size", type=int, help="Rows per pseudo-new subset (set to expected new size).")
     baseline.add_argument("--subset-fraction", type=float, default=0.3, help="Used when --subset-size is absent.")
-    compare = sub.add_parser("compare", parents=[common], help="Compare training vs new population.")
-    compare.add_argument("--new", required=True, help="New population (csv/parquet/feather).")
-    compare.add_argument("--out", required=True, help="Output directory for the comparison.")
-    compare.add_argument("--baseline", help="Baseline directory; if absent a size-matched baseline is built.")
+    compare = sub.add_parser("compare", parents=[common],
+                             help="Compare the new population with the fit set and the evaluation set.")
+    compare.add_argument("--new", required=True, help="New unlabelled population (csv/parquet/feather).")
+    compare.add_argument("--out", required=True, help="Output directory.")
+    compare.add_argument("--test", help="Evaluation set the model was scored on. If omitted, every test uses --train.")
+    compare.add_argument("--baseline", help="Baseline directory for a single labelled set. Not used with --test.")
     compare.add_argument("--n-bootstrap", type=int, default=200)
     compare.add_argument("--n-permutations", type=int, default=100)
     compare.add_argument("--n-classifier-permutations", type=int, default=20)
@@ -2192,11 +2441,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             from population_drift.report import build_report
             build_report(args.report, baseline_dir=args.out)
     else:
+        return _run_compare_command(args, source, target, features, categorical, model, config, sentinels)
+    return 0
+
+
+def _run_compare_command(args: argparse.Namespace, source: pd.DataFrame, target: pd.DataFrame, features: list[str],
+                         categorical: list[str] | None, model: Any | None, config: DriftConfig,
+                         sentinels: list[Any]) -> int:
+    """Compare the new population with the labelled set, or with the fit and evaluation sets."""
+    if args.test:
+        if args.baseline:
+            logger.error("A supplied evaluation set builds one baseline per reference. Omit --baseline.")
+            return 2
+        evaluation = load_table(args.test, sentinels)
+        run_paired_comparison(source, evaluation, target, features, categorical, model, args.label_col, config,
+                              args.out, args.n_rounds)
+    else:
         run_comparison(source, target, features, categorical, model, args.label_col, config, args.baseline,
                        args.out, args.n_rounds)
-        if args.report:
-            from population_drift.report import build_report
-            build_report(args.report, comparison_dir=args.out)
+    if args.report:
+        from population_drift.report import build_report
+        build_report(args.report, comparison_dir=args.out)
     return 0
 
 
