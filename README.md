@@ -2,7 +2,7 @@
 
 Decide whether a LightGBM model fitted on one population can be applied to a new population that has the same features and **no labels**.
 
-The comparison is scored against a baseline: the same statistics computed on random splits of the training population. A fixed cutoff such as PSI ≥ 0.10 is not, by itself, the decision.
+The comparison is scored against a baseline: the same statistics computed on random splits of the training population. A fixed cutoff such as Population Stability Index (PSI) ≥ 0.10 is not, by itself, the decision.
 
 Run the commands below from the repository root, with the virtual environment activated. Outputs under `data/`, `demo_data/`, `runs/`, and `reports/` are gitignored. Put your own files there, or anywhere else outside the paths you commit.
 
@@ -20,33 +20,25 @@ pip install -r requirements.txt
 
 ## Compare your own populations
 
-You need three inputs, and a model file if you want score, attribution, and performance checks.
+The new table has the same features and no labels. Levels are **severe**, **moderate**, and **mild**.
 
-| File | What it must contain |
+Without `--test`, every test uses `--train` against the new table. The toolkit does not split `--train`.
+
+With `--test`, `--train` is the fit set and `--test` is the evaluation set:
+
+| Tests | Pair |
 |---|---|
-| Training table | Feature columns, plus the label if you want calibration and label-free performance. Use a **holdout**: rows the model was not fitted on. On rows used for fitting, calibration and the reference AUC are optimistic. |
-| New table | The same feature columns. Labels are not read. Extra columns are ignored once you pass a feature list. |
-| Feature list | One model input per line. Leave out identifiers, timestamps, and anything built from the label or from the decision. |
-| Model (optional) | LightGBM Booster (`.txt`) or a joblib/pickle `LGBMClassifier` / `LGBMRegressor`. |
+| Margins, missingness, domain classifier, kernel tests, correlations, support | Fit set vs new |
+| Scores, positive rate, TreeSHAP (Shapley additive explanations), weighting, confidence-based performance estimation (CBPE), black-box shift estimation (BBSE) | Evaluation set vs new |
+| Calibration | Evaluation set |
 
-CSV, Parquet, and Feather are accepted. If missing values are stored as codes, pass them with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct values is treated as categorical anyway, because the Kolmogorov–Smirnov statistic is not valid under heavy ties.
+Each reference needs at least `n_new + 30` rows, and the new table needs at least 30. Use 30 rounds for a decision (the empirical p-value cannot be smaller than `1/(rounds + 1)`).
 
-`--subset-size` must be the new table’s row count. PSI, KS D, and the domain-classifier AUC shrink as the sample grows, so a baseline built at the wrong size is not a reference. The training table must be at least `subset-size + 30` rows. Use 30 baseline rounds for a decision (the empirical p-value cannot be smaller than `1/(rounds + 1)`).
+CSV, Parquet, and Feather are accepted. Pass missing codes with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct training values is treated as categorical anyway, because the Kolmogorov–Smirnov (KS) statistic is not valid under heavy ties. Leave identifiers, the time column, and anything built from the label or the score out of the feature list.
 
 ```bash
-python -m population_drift baseline \
-  --train data/train.parquet \
-  --features-file data/features.txt \
-  --categorical country,channel \
-  --label-col target \
-  --model data/model.txt \
-  --missing-sentinels -999 \
-  --subset-size 5000 \
-  --n-rounds 30 \
-  --out runs/baseline
-
 python -m population_drift compare \
-  --train data/train.parquet \
+  --train data/labeled.parquet \
   --new data/new.parquet \
   --features-file data/features.txt \
   --categorical country,channel \
@@ -55,49 +47,64 @@ python -m population_drift compare \
   --missing-sentinels -999 \
   --threshold 0.5 \
   --performance-tolerance 0.02 \
-  --baseline runs/baseline \
+  --n-rounds 30 \
   --out runs/comparison \
   --report runs/report.html
 ```
 
-`--threshold` is the operating cutoff used for the predicted-positive rate. Set it to the cutoff you actually deploy, not 0.5, if those differ. `--performance-tolerance` is the absolute AUC drop (binary) or relative error increase (regression) that counts as material. `--problem-type regression` switches the performance metrics.
+`--threshold` is the operating cutoff for the predicted-positive rate. Set it to the cutoff you deploy. `--performance-tolerance` is the absolute area under the curve (AUC) drop (binary) or relative error increase (regression) that counts as material. `--problem-type regression` switches those metrics.
 
-Omit `--baseline` and a size-matched baseline is built under `runs/comparison/baseline`. Rebuild the baseline yourself when the new population’s size changes.
+When the fit set and the evaluation set are separate files:
 
-Regenerate the HTML report from a finished run:
+```bash
+python -m population_drift compare \
+  --train data/fit.parquet \
+  --test data/evaluation.parquet \
+  --new data/new.parquet \
+  --features-file data/features.txt \
+  --label-col target \
+  --model data/model.txt \
+  --out runs/comparison \
+  --report runs/report.html
+```
+
+Regenerate the report from a finished directory:
 
 ```bash
 python -m population_drift.report --comparison runs/comparison --out runs/report.html
-python -m population_drift.report --baseline runs/baseline --out runs/baseline_report.html
 ```
+
+`baseline` builds one source-vs-source null. Pass it to `compare` with `--baseline` when there is no `--test`. With `--test`, each reference gets its own baseline inside the output directory.
 
 ### What to open
 
-The compare command prints a verdict, the signals, and the flagged features. The same content is in:
-
 | Path | Contents |
 |---|---|
-| `runs/report.html` | Report. Open it in a browser. |
-| `runs/comparison/decision.json` | `verdict`, `verdict_level` (`red`, `amber`, `green`), and one record per signal. |
-| `runs/comparison/feature_assessment.csv` | Per-feature severity and the reason string. |
-| `runs/comparison/baseline_comparison.csv` | Every recorded statistic against its baseline percentile and empirical p-value. |
-| `runs/comparison/tables/` | One CSV per task. |
+| `runs/report.html` | Report. Each section names the pair that test used. |
+| `runs/comparison/decision.json` | `verdict_level` (`severe`, `moderate`, `mild`), signals, and `task_pairs`. |
 
-`red` means do not use the model as is: at least one signal is red. `amber` means use only with review. `green` means no red signal, at most two amber signals, and none of those amber signals on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP on the training population.
+`severe` means do not use the model as is. `moderate` means use only with review. `mild` means no severe signal, at most two moderate signals, and no moderate signal on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP (Shapley additive explanations) on the population used for that comparison.
 
-A green label is not a measurement of accuracy on the new population. Concept shift, a change in P(y|x), cannot be seen without labels. The performance numbers in the report are estimates under the assumptions in [docs/reference.md](docs/reference.md).
+A mild label is not a measurement of accuracy on the new population. The run does not test whether a given feature vector still maps to the same label. The performance numbers are estimates under the assumptions in [docs/reference.md](docs/reference.md).
 
 ## Example data
 
-`examples/make_synthetic_data.py` is not part of the analysis. The package does not import it. It only writes files so the commands below can be run without a real dataset. Output goes to `demo_data/`, which is gitignored.
+`examples/make_synthetic_data.py` is not part of the analysis. The package does not import it. It only writes files so the commands above can be run without a real dataset. Output goes to `demo_data/`, which is gitignored.
 
-`train.csv` is the labelled slice the example model was fitted on. `new.csv` has 700 unlabelled rows by default, so the baseline subset size below matches that file. `evaluation.csv` is a later labelled slice and is not used by this command.
+`train.csv` is the labelled slice the example model was fitted on. `evaluation.csv` is a later labelled slice the model did not see. `new.csv` has no label. The command below uses `train.csv` for every test. Add `--test demo_data/evaluation.csv` to try the two-file assignment. Ten rounds are enough to see the pipeline; a decision uses 30.
 
 ```bash
 python examples/make_synthetic_data.py --out demo_data
-COMMON="--train demo_data/train.csv --features-file demo_data/features.txt --categorical c01,c02,c03,c04 --label-col target --model demo_data/model.txt"
-python -m population_drift baseline $COMMON --subset-size 700 --n-rounds 20 --out runs/baseline
-python -m population_drift compare $COMMON --new demo_data/new.csv --baseline runs/baseline --out runs/comparison --report runs/report.html
+python -m population_drift compare \
+  --train demo_data/train.csv \
+  --new demo_data/new.csv \
+  --features-file demo_data/features.txt \
+  --categorical c01,c02,c03,c04 \
+  --label-col target \
+  --model demo_data/model.txt \
+  --n-rounds 10 \
+  --out runs/comparison \
+  --report runs/report.html
 ```
 
 ## Layout
@@ -123,7 +130,13 @@ baseline = pdrift.build_baseline(
     n_rounds=30, subset_size=len(new), config=config, output_dir="runs/baseline",
 )
 decision = pdrift.run_comparison(
-    train, new, features, categorical, model, "target", config,
+    labeled, new, features, categorical, model, "target", config,
     baseline_dir="runs/baseline", output_dir="runs/comparison",
 )
+paired = pdrift.run_paired_comparison(
+    fit_set, evaluation, new, features, categorical, model, "target", config,
+    output_dir="runs/comparison",
+)
 ```
+
+`run_comparison` uses one labelled table for every test. `run_paired_comparison` assigns each test to the fit set or the evaluation set. `decision["verdict_level"]` is `severe`, `moderate`, or `mild`.
