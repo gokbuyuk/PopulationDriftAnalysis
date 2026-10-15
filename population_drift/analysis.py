@@ -486,7 +486,9 @@ def validate_inputs(source: pd.DataFrame, target: pd.DataFrame, feature_cols: Se
         ValueError: If inputs are empty, features are duplicated, or columns are missing.
     """
     if source.empty or target.empty:
-        raise ValueError("Source and target populations must be non-empty.")
+        raise ValueError(
+            f"Source row count is {len(source)}; target row count is {len(target)}. Both populations must be non-empty."
+        )
     feature_cols = list(feature_cols)
     if not feature_cols:
         raise ValueError("At least one feature column is required.")
@@ -2123,8 +2125,13 @@ def run_comparison(source: pd.DataFrame, target: pd.DataFrame, feature_cols: Seq
     run_warnings = []
     if baseline_dir is not None:
         baseline = load_baseline(baseline_dir)
-        if set(baseline.metadata["feature_cols"]) != set(feature_cols):
-            raise ValueError("The baseline was built with a different feature set; rebuild it.")
+        baseline_features = set(baseline.metadata["feature_cols"])
+        if baseline_features != set(feature_cols):
+            raise ValueError(
+                "The baseline feature set does not match this comparison. "
+                f"Only in the baseline: {sorted(baseline_features - set(feature_cols)) or 'none'}. "
+                f"Only in this comparison: {sorted(set(feature_cols) - baseline_features) or 'none'}."
+            )
         ratio = len(target) / baseline.metadata["subset_size"]
         if not 0.5 <= ratio <= 2.0:
             run_warnings.append(
