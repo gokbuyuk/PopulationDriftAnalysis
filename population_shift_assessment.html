@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assessing LightGBM Transferability to an Unlabelled Population</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --card: #ffffff; --text: #1f2933; --muted: #52606d;
+    --accent: #2563eb; --border: #d9e2ec; --code: #0f172a;
+    --green: #e6f4ea; --green-b: #2e7d32; --amber: #fff4e5; --amber-b: #b26a00;
+    --red: #fdecea; --red-b: #c62828; --blue: #e8f0fe;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         background: var(--bg); color: var(--text); line-height: 1.6; }
+  header { background: linear-gradient(135deg, #1e3a8a, #2563eb); color: #fff; padding: 2.5rem 1.5rem; }
+  header h1 { margin: 0 0 .5rem; font-size: 1.9rem; }
+  header p { margin: 0; opacity: .9; max-width: 60rem; }
+  .layout { display: grid; grid-template-columns: 260px 1fr; gap: 1.5rem; max-width: 1300px;
+            margin: 0 auto; padding: 1.5rem; }
+  nav { position: sticky; top: 1rem; align-self: start; background: var(--card); border: 1px solid var(--border);
+        border-radius: 10px; padding: 1rem; font-size: .9rem; max-height: 92vh; overflow: auto; }
+  nav a { display: block; color: var(--muted); text-decoration: none; padding: .25rem 0; }
+  nav a:hover { color: var(--accent); }
+  main section { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+                 padding: 1.5rem 1.75rem; margin-bottom: 1.5rem; }
+  h2 { margin-top: 0; color: #1e3a8a; border-bottom: 2px solid var(--border); padding-bottom: .4rem; }
+  h3 { color: #1e40af; margin-top: 1.5rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #eef2f7; }
+  code { background: #eef2f7; padding: .1rem .3rem; border-radius: 4px; font-size: .88em; }
+  pre { background: var(--code); color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto;
+        font-size: .82rem; line-height: 1.45; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { border-left: 5px solid var(--accent); background: var(--blue); padding: .8rem 1rem;
+             border-radius: 6px; margin: 1rem 0; }
+  .warn { border-left-color: var(--amber-b); background: var(--amber); }
+  .danger { border-left-color: var(--red-b); background: var(--red); }
+  .ok { border-left-color: var(--green-b); background: var(--green); }
+  .g { background: var(--green); } .a { background: var(--amber); } .r { background: var(--red); }
+  .tag { display: inline-block; font-size: .72rem; font-weight: 600; padding: .05rem .45rem; border-radius: 999px;
+         border: 1px solid; margin-left: .3rem; vertical-align: middle; }
+  .tag.h { color: var(--amber-b); border-color: var(--amber-b); }
+  .tag.s { color: var(--green-b); border-color: var(--green-b); }
+  details { margin: .75rem 0; }
+  summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+  ol li, ul li { margin-bottom: .3rem; }
+  footer { text-align: center; color: var(--muted); font-size: .85rem; padding: 1rem 0 2rem; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } nav { position: static; max-height: none; } }
+  @media print { nav { display: none; } .layout { grid-template-columns: 1fr; } details { display: block; }
+                 details > summary { display: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Is the model transferable? Comparing a training population with an unlabelled new population</h1>
+  <p>A label-free, statistically rigorous protocol for a LightGBM model trained on 20 features, to decide whether a
+     new population (no ground truth available) is similar enough for the model to be used as is, used with caution,
+     or not used.</p>
+</header>
+
+<div class="layout">
+<nav>
+  <strong>Contents</strong>
+  <a href="#scope">1. Scope and limits without labels</a>
+  <a href="#prep">2. Preconditions and data hygiene</a>
+  <a href="#baseline">3. The baseline: source-vs-source null</a>
+  <a href="#stats">4. Significance, effect size, equivalence</a>
+  <a href="#uni">5. Univariate feature tests</a>
+  <a href="#multi">6. Multivariate / joint tests</a>
+  <a href="#ood">7. Support and out-of-distribution</a>
+  <a href="#model">8. Model-centric checks</a>
+  <a href="#perf">9. Label-free performance estimation</a>
+  <a href="#decision">10. Decision framework</a>
+  <a href="#report">11. Reporting checklist</a>
+  <a href="#refs">12. References</a>
+</nav>
+
+<main>
+
+<!-- 1 -->
+<section id="scope">
+  <h2>1. Scope and what can (and cannot) be concluded without labels</h2>
+  <p>Distribution shift comes in three forms. Without target labels only some of them can be assessed:</p>
+  <table>
+    <tr><th>Shift type</th><th>Definition</th><th>Detectable without labels?</th><th>Methods in this document</th></tr>
+    <tr><td>Covariate shift</td><td>P(X) changes, P(y|X) unchanged</td><td class="g">Yes</td><td>Sections 5–9</td></tr>
+    <tr><td>Label (prior) shift</td><td>P(y) changes, P(X|y) unchanged</td><td class="g">Yes, estimable</td><td>BBSE (Section 9.3)</td></tr>
+    <tr><td>Concept shift</td><td>P(y|X) changes</td><td class="r">No</td><td>None. Requires labels.</td></tr>
+  </table>
+  <div class="callout danger">
+    <strong>Fundamental limitation.</strong> All label-free methods assume the relationship between features and target is
+    unchanged. If the outcome mechanism differs in the new population, features can look identical and the model can still
+    fail. A "similar population" conclusion therefore means <em>"no evidence of covariate or prior shift that would degrade
+    the model"</em>, not <em>"the model is proven to perform well"</em>. Whenever feasible, label a small random target sample
+    to verify the conclusion.
+  </div>
+  <div class="callout">
+    <strong>Recommended order:</strong> preconditions → baseline null → univariate tests → joint tests → out-of-support check →
+    model-centric checks → label-free performance estimate → decision. Write the decision thresholds (Section 10)
+    <em>before</em> looking at target results.
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="prep">
+  <h2>2. Preconditions and data hygiene</h2>
+  <ol>
+    <li><strong>Schema parity:</strong> same 20 columns, dtypes, units, encodings, category levels, and missing-value coding
+        (e.g. <code>-999</code> vs <code>NaN</code>). Many apparent shifts are pipeline differences.</li>
+    <li><strong>Same preprocessing:</strong> apply the <em>source-fitted</em> transformations to the target. Never refit
+        them on the target or on pooled data.</li>
+    <li><strong>Source split usage:</strong> use the source <em>holdout/test</em> set (not training rows) as the reference
+        for model-based checks. Training rows carry optimistic, overfitted scores.</li>
+    <li><strong>Remove leakage columns</strong> from joint tests: IDs, timestamps, row order, batch identifiers.</li>
+    <li><strong>Representativeness:</strong> confirm the target sample is a random/representative draw of the population
+        where the model will be used.</li>
+    <li><strong>Reproducibility:</strong> fix and log a seed; record dataset hashes, row counts, and code version.</li>
+  </ol>
+</section>
+
+<!-- 3 -->
+<section id="baseline">
+  <h2>3. The baseline: build a source-vs-source null distribution</h2>
+  <p>Fixed rule-of-thumb thresholds ignore sample size and the feature's natural variability. The most defensible baseline
+     is the amount of "drift" observed between two random samples <em>of the same (source) population</em>. Any
+     target statistic should be compared to this reference.</p>
+  <h3>Procedure</h3>
+  <ol>
+    <li>Repeat <em>B</em> times (e.g. B = 200–1000, fixed seed): draw a random subset of the source of size
+        <em>n<sub>target</sub></em> (sample A) and use the remaining source rows (sample B).</li>
+    <li>Compute every statistic used below (KS D, PSI, Wasserstein, SMD, classifier AUC, score PSI, ...) for A vs B.</li>
+    <li>The null threshold for each statistic is its empirical 95th (or 99th) percentile.</li>
+    <li>Empirical p-value for the target statistic <em>T</em>: <code>p = (1 + #{null ≥ T}) / (1 + B)</code>.</li>
+  </ol>
+  <p>Matching the size to <em>n<sub>target</sub></em> matters because many statistics (KS D, PSI, AUC from a finite classifier)
+     are biased upward in small samples.</p>
+  <h3>Optional: an operational tolerance baseline</h3>
+  <p>If the source has a time dimension, compute the same statistics between the source training window and later source periods
+     where the model was <em>known to perform acceptably</em>. That gives a practical tolerance: target drift
+     inside this range has already been shown not to break the model.</p>
+  <table>
+    <tr><th>Target statistic relative to baseline</th><th>Interpretation</th></tr>
+    <tr class="g"><td>≤ 95th percentile of source-vs-source null</td><td>Indistinguishable from sampling noise → similar on this metric</td></tr>
+    <tr class="a"><td>&gt; null 95th percentile but ≤ operational tolerance</td><td>Real but previously tolerated difference</td></tr>
+    <tr class="r"><td>&gt; both</td><td>Real and outside known safe range → investigate</td></tr>
+  </table>
+  <details><summary>Python sketch: null distribution for any two-sample statistic</summary>
+<pre><code>import numpy as np
+import pandas as pd
+from typing import Callable
+
+
+def null_distribution(source: pd.Series, n_target: int,
+                      statistic: Callable[[pd.Series, pd.Series], float],
+                      n_rounds: int = 500, seed: int = 42) -&gt; np.ndarray:
+    """Source-vs-source null of a two-sample statistic with target-matched sample size."""
+    if n_target &gt;= len(source):
+        raise ValueError(f"n_target={n_target} must be smaller than source size={len(source)}.")
+    rng = np.random.default_rng(seed)
+    values = np.empty(n_rounds)
+    for i in range(n_rounds):
+        order = rng.permutation(len(source))
+        values[i] = statistic(source.iloc[order[:n_target]], source.iloc[order[n_target:]])
+    return values
+
+
+def empirical_p_value(observed: float, null_values: np.ndarray) -&gt; float:
+    """One-sided permutation-style p-value: P(null ≥ observed)."""
+    return (1 + np.sum(null_values &gt;= observed)) / (1 + len(null_values))</code></pre>
+  </details>
+</section>
+
+<!-- 4 -->
+<section id="stats">
+  <h2>4. Statistical principles: significance, effect size, and equivalence</h2>
+  <h3>4.1 Significance alone is not a decision criterion</h3>
+  <p>With thousands of rows, almost every test rejects H<sub>0</sub> ("same distribution") even for trivial
+     differences. With few rows, real differences go undetected. Always report three things per feature:</p>
+  <ol>
+    <li><strong>p-value</strong> (is there a difference at all?), corrected for multiple testing;</li>
+    <li><strong>effect size with a bootstrap 95% CI</strong> (how large is it?);</li>
+    <li><strong>position relative to the source-vs-source null</strong> (is it larger than natural variability?).</li>
+  </ol>
+  <h3>4.2 Multiple comparisons</h3>
+  <p>Testing 20 features at α = 0.05 gives roughly a 64% chance of at least one false positive if nothing changed
+     (1 − 0.95<sup>20</sup> ≈ 0.64). Correct the p-values:</p>
+  <ul>
+    <li><strong>Benjamini–Hochberg (FDR)</strong>, recommended for screening many features;</li>
+    <li><strong>Holm (FWER)</strong>, when any single false alarm is costly.</li>
+  </ul>
+  <p>Report how many tests were run in total, not only those that were significant.</p>
+  <h3>4.3 "Not significant" ≠ "similar": use equivalence testing</h3>
+  <p>Failing to reject H<sub>0</sub> is <em>absence of evidence</em>, not evidence of similarity. To <em>claim</em>
+     similarity, use the <strong>Two One-Sided Tests (TOST)</strong> procedure with a pre-specified equivalence margin, e.g.
+     |SMD| &lt; 0.1. Equivalence is concluded when the 90% CI of the difference lies entirely inside the margin.</p>
+  <table>
+    <tr><th>Difference test (H<sub>0</sub>: equal)</th><th>Equivalence test (H<sub>0</sub>: differ by ≥ margin)</th><th>Conclusion</th></tr>
+    <tr class="g"><td>Not rejected</td><td>Rejected</td><td>Similar (equivalent)</td></tr>
+    <tr class="g"><td>Rejected</td><td>Rejected</td><td>Statistically different but practically equivalent (typical with large n)</td></tr>
+    <tr class="a"><td>Not rejected</td><td>Not rejected</td><td>Inconclusive: underpowered, more data needed</td></tr>
+    <tr class="r"><td>Rejected</td><td>Not rejected</td><td>Different and practically relevant</td></tr>
+  </table>
+  <details><summary>Python sketch: TOST on a feature mean with an SMD-based margin</summary>
+<pre><code>import numpy as np
+from statsmodels.stats.weightstats import ttost_ind
+
+pooled_sd = np.sqrt((src[col].var() + tgt[col].var()) / 2)
+margin = 0.1 * pooled_sd                          # equivalence margin |SMD| &lt; 0.1
+p_equivalence, _, _ = ttost_ind(tgt[col].dropna(), src[col].dropna(),
+                                -margin, margin, usevar="unequal")
+# p_equivalence &lt; 0.05  -&gt;  means are equivalent within ±0.1 SD</code></pre>
+  </details>
+</section>
+
+<!-- 5 -->
+<section id="uni">
+  <h2>5. Univariate feature tests (one per feature, 20 features)</h2>
+  <p>Legend: <span class="tag s">statistical</span> = formal test with a p-value; <span class="tag h">heuristic</span> =
+     convention, not a statistical test. Use heuristics only alongside the Section 3 baseline.</p>
+
+  <h3>5.1 Continuous features</h3>
+  <table>
+    <tr><th>Method</th><th>H<sub>0</sub> / what it measures</th><th>Interpretation</th><th>Rule of thumb</th></tr>
+    <tr><td><strong>Kolmogorov–Smirnov two-sample</strong> <span class="tag s">statistical</span></td>
+        <td>Same distribution. D = max |ECDF<sub>s</sub> − ECDF<sub>t</sub>| ∈ [0, 1].</td>
+        <td>Sensitive to shifts near the median, weak in the tails. Invalid p-values with many ties/discrete values.</td>
+        <td>D &lt; 0.1 negligible, 0.1–0.2 moderate, &gt; 0.2 large <span class="tag h">heuristic</span>. Prefer the null baseline.</td></tr>
+    <tr><td><strong>Anderson–Darling k-sample</strong> <span class="tag s">statistical</span></td>
+        <td>Same distribution. Tail-weighted ECDF distance.</td>
+        <td>More powerful than KS for tail differences (often what matters for risk models). SciPy's p-value is capped to [0.001, 0.25];
+            use a permutation p-value if finer resolution is needed.</td>
+        <td>Use p-value (BH-corrected) + null baseline.</td></tr>
+    <tr><td><strong>Cramér–von Mises two-sample</strong> <span class="tag s">statistical</span></td>
+        <td>Same distribution. Integrated squared ECDF difference.</td>
+        <td>Sensitive to differences across the whole distribution, not only the maximum gap.</td>
+        <td>Use p-value + null baseline.</td></tr>
+    <tr><td><strong>Wasserstein-1 (Earth Mover's) distance</strong></td>
+        <td>Effect size in the feature's units: average "transport" needed to turn one distribution into the other.</td>
+        <td>Interpretable magnitude. Divide by source SD or IQR to compare across features.</td>
+        <td>Normalized W &lt; 0.1 small, 0.1–0.25 moderate, &gt; 0.25 large <span class="tag h">heuristic</span>. Bootstrap CI.</td></tr>
+    <tr><td><strong>Standardized Mean Difference (SMD)</strong></td>
+        <td>(μ<sub>t</sub> − μ<sub>s</sub>) / √((σ²<sub>s</sub> + σ²<sub>t</sub>)/2)</td>
+        <td>Location shift only. Complement with a variance ratio (σ²<sub>t</sub>/σ²<sub>s</sub>).</td>
+        <td>|SMD| &lt; 0.1 balanced (Austin 2009); Cohen: 0.2 small, 0.5 medium, 0.8 large. Variance ratio outside [0.5, 2] = notable.</td></tr>
+    <tr><td><strong>Population Stability Index (PSI)</strong> <span class="tag h">heuristic</span></td>
+        <td>Σ (q<sub>i</sub> − p<sub>i</sub>) · ln(q<sub>i</sub>/p<sub>i</sub>) over bins (source quantile deciles).</td>
+        <td>Industry-standard, symmetric KL-type divergence. Depends on binning and grows with small n. Report bins used.</td>
+        <td>&lt; 0.10 stable; 0.10–0.25 moderate shift; &gt; 0.25 major shift (Siddiqi 2006). Compare to the null baseline.</td></tr>
+  </table>
+
+  <h3>5.2 Categorical / binary / low-cardinality ordinal features</h3>
+  <table>
+    <tr><th>Method</th><th>H<sub>0</sub> / what it measures</th><th>Interpretation</th><th>Rule of thumb</th></tr>
+    <tr><td><strong>Chi-square test of homogeneity</strong> <span class="tag s">statistical</span></td>
+        <td>Same category proportions (2 × k table).</td>
+        <td>Requires expected counts ≥ 5 per cell. Otherwise merge rare levels or use Fisher's exact / a permutation test.</td>
+        <td>p-value (BH-corrected).</td></tr>
+    <tr><td><strong>Cramér's V</strong></td>
+        <td>Effect size for the chi-square test, ∈ [0, 1].</td>
+        <td>For a 2 × k table (df* = 1), Cohen's scale applies directly.</td>
+        <td>0.1 small, 0.3 medium, 0.5 large (Cohen 1988).</td></tr>
+    <tr><td><strong>Jensen–Shannon distance</strong> (base 2)</td>
+        <td>Symmetric, bounded [0, 1] divergence between category distributions.</td>
+        <td>Robust to zero cells, unlike KL divergence.</td>
+        <td>&lt; 0.1 small <span class="tag h">heuristic</span>; use null baseline.</td></tr>
+    <tr><td><strong>PSI on categories</strong> <span class="tag h">heuristic</span></td>
+        <td>As above, with categories as bins.</td>
+        <td>Same caveats; apply a small ε to empty categories.</td>
+        <td>0.10 / 0.25 thresholds.</td></tr>
+    <tr><td><strong>Unseen-level rate</strong></td>
+        <td>Share of target rows with categories absent in training.</td>
+        <td>LightGBM routes unseen categories down a default branch: predictions on them are unreliable.</td>
+        <td>&gt; 1% of rows warrants review <span class="tag h">heuristic</span>.</td></tr>
+  </table>
+
+  <h3>5.3 Missingness (every feature)</h3>
+  <table>
+    <tr><th>Method</th><th>Interpretation</th><th>Rule of thumb</th></tr>
+    <tr><td><strong>Two-proportion z-test</strong> (or Fisher's exact) on missing rate <span class="tag s">statistical</span></td>
+        <td>LightGBM learns a direction for missing values. A change in missingness changes which branch rows follow,
+            and may also indicate a different data collection process.</td>
+        <td>Effect size Cohen's h: 0.2 small, 0.5 medium, 0.8 large.</td></tr>
+    <tr><td>Missingness co-occurrence pattern (Jaccard or a chi-square test on missingness-pattern frequencies)</td>
+        <td>Detects systematic, not random, changes in what is recorded.</td>
+        <td>New dominant patterns = data pipeline review.</td></tr>
+  </table>
+
+  <details><summary>Python sketch: univariate battery with BH correction</summary>
+<pre><code>import numpy as np
+import pandas as pd
+from scipy import stats
+from statsmodels.stats.multitest import multipletests
+
+
+def psi(source: np.ndarray, target: np.ndarray, n_bins: int = 10, eps: float = 1e-6) -&gt; float:
+    """PSI with source-quantile bins. Handle NaN separately (missingness test)."""
+    edges = np.unique(np.quantile(source, np.linspace(0, 1, n_bins + 1)))
+    edges[0], edges[-1] = -np.inf, np.inf
+    p = np.clip(np.histogram(source, edges)[0] / len(source), eps, None)
+    q = np.clip(np.histogram(target, edges)[0] / len(target), eps, None)
+    return float(np.sum((q - p) * np.log(q / p)))
+
+
+rows = []
+for col in continuous_cols:
+    s, t = src[col].dropna().to_numpy(), tgt[col].dropna().to_numpy()
+    ks = stats.ks_2samp(s, t)
+    rows.append({
+        "feature": col,
+        "ks_d": ks.statistic, "ks_p": ks.pvalue,
+        "smd": (t.mean() - s.mean()) / np.sqrt((s.var(ddof=1) + t.var(ddof=1)) / 2),
+        "var_ratio": t.var(ddof=1) / s.var(ddof=1),
+        "wasserstein_norm": stats.wasserstein_distance(s, t) / s.std(ddof=1),
+        "psi": psi(s, t),
+    })
+report = pd.DataFrame(rows)
+report["ks_p_bh"] = multipletests(report["ks_p"], method="fdr_bh")[1]</code></pre>
+  </details>
+</section>
+
+<!-- 6 -->
+<section id="multi">
+  <h2>6. Multivariate / joint distribution tests</h2>
+  <p>Marginals can match while the <em>joint</em> distribution differs (e.g. age and income keep their histograms
+     but their correlation flips). Gradient-boosted trees rely on interactions, so joint tests are essential.</p>
+
+  <h3>6.1 Classifier two-sample test (adversarial validation) — primary test</h3>
+  <p>Train a classifier (LightGBM) to predict <em>population membership</em> (source = 0, target = 1) from the 20 features.
+     Use stratified K-fold out-of-fold predictions and compute the AUC (Lopez-Paz &amp; Oquab, 2017).</p>
+  <ul>
+    <li><strong>H<sub>0</sub>:</strong> the populations are indistinguishable, so the expected AUC is 0.5.</li>
+    <li><strong>p-value:</strong> permutation test (shuffle population labels, rerun CV, B ≥ 100). Alternatively, the
+        Mann–Whitney U test on the out-of-fold scores as an approximation.</li>
+    <li><strong>CI:</strong> bootstrap the out-of-fold AUC.</li>
+    <li><strong>Diagnosis:</strong> SHAP importance of the domain classifier shows <em>which features drive the separation</em>.</li>
+    <li><strong>By-product:</strong> the domain probabilities give density-ratio weights for Section 9.1.</li>
+  </ul>
+  <table>
+    <tr><th>Out-of-fold domain AUC</th><th>Interpretation</th></tr>
+    <tr class="g"><td>≤ null 95th percentile (typically 0.50–0.55)</td><td>Indistinguishable populations</td></tr>
+    <tr class="g"><td>0.55–0.65</td><td>Mild shift. Usually tolerable if not driven by high-importance model features.</td></tr>
+    <tr class="a"><td>0.65–0.80</td><td>Moderate shift. Weighted performance estimate (Section 9) required.</td></tr>
+    <tr class="r"><td>&gt; 0.80</td><td>Strong shift. Populations are largely separable; overlap is poor and transfer is risky.</td></tr>
+  </table>
+  <p class="callout warn">These AUC bands are <strong>heuristics</strong>, loosely mirroring the Hosmer–Lemeshow discrimination scale
+     (0.7 acceptable, 0.8 excellent, 0.9 outstanding). The permutation p-value and the null baseline are the statistical
+     criteria. Remove ID/timestamp columns first, or the AUC is trivially ≈ 1.</p>
+  <p class="callout warn">The domain AUC is a <strong>global</strong> measure and can stay low while one important feature shifts
+     materially. Example: a mean shift of SMD = 0.38 in a single feature (one of two) gave an out-of-fold AUC of only 0.55
+     on synthetic data. Never rely on the AUC alone; always cross it with the per-feature drift × importance table (Section 8.1).</p>
+  <details><summary>Python sketch: classifier two-sample test with permutation p-value</summary>
+<pre><code>import numpy as np
+import pandas as pd
+from lightgbm import LGBMClassifier
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+
+
+def oof_domain_scores(features: pd.DataFrame, domain: np.ndarray, seed: int = 42) -&gt; np.ndarray:
+    """Out-of-fold P(target | x) from a LightGBM domain classifier."""
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+    model = LGBMClassifier(n_estimators=200, learning_rate=0.05, random_state=seed, verbose=-1)
+    return cross_val_predict(model, features, domain, cv=cv, method="predict_proba")[:, 1]
+
+
+features = pd.concat([src[feature_cols], tgt[feature_cols]], ignore_index=True)
+domain = np.r_[np.zeros(len(src), dtype=int), np.ones(len(tgt), dtype=int)]
+scores = oof_domain_scores(features, domain)
+observed_auc = roc_auc_score(domain, scores)
+
+rng = np.random.default_rng(42)
+null_auc = np.array([roc_auc_score(perm, oof_domain_scores(features, perm))
+                     for perm in (rng.permutation(domain) for _ in range(100))])
+p_value = (1 + np.sum(null_auc &gt;= observed_auc)) / (1 + len(null_auc))</code></pre>
+  </details>
+
+  <h3>6.2 Kernel / distance two-sample tests</h3>
+  <table>
+    <tr><th>Method</th><th>H<sub>0</sub></th><th>Interpretation</th><th>Notes</th></tr>
+    <tr><td><strong>Maximum Mean Discrepancy (MMD)</strong>, RBF kernel, permutation p-value <span class="tag s">statistical</span></td>
+        <td>P<sub>s</sub>(X) = P<sub>t</sub>(X)</td>
+        <td>p &lt; 0.05 = joint distributions differ. MMD² magnitude is the effect size; compare it to the null baseline.</td>
+        <td>Standardize with source statistics first. Median-heuristic bandwidth. Encode categoricals. O(n²): subsample (e.g. 5k per group) and repeat across seeds.
+            Library: <code>alibi-detect</code> (MMDDrift).</td></tr>
+    <tr><td><strong>Energy distance test</strong> <span class="tag s">statistical</span></td>
+        <td>P<sub>s</sub>(X) = P<sub>t</sub>(X)</td>
+        <td>Same reading as MMD. Few tuning parameters.</td>
+        <td>Permutation p-value. Library: <code>dcor</code>.</td></tr>
+  </table>
+  <p>Use these to <em>confirm</em> the classifier test. If they disagree, the classifier test is usually more powerful on
+     tabular data with mixed types; the kernel tests are more sensitive to diffuse, low-dimensional shifts.</p>
+
+  <h3>6.3 Dependence structure</h3>
+  <table>
+    <tr><th>Method</th><th>Interpretation</th><th>Rule of thumb</th></tr>
+    <tr><td><strong>Pairwise correlation difference</strong>, Fisher z-test per pair (190 pairs for 20 features), BH-corrected <span class="tag s">statistical</span></td>
+        <td>z = (atanh r<sub>t</sub> − atanh r<sub>s</sub>) / √(1/(n<sub>t</sub>−3) + 1/(n<sub>s</sub>−3)). For Spearman ρ, use variance ≈ 1.06/(n−3) (Fieller et al., 1957).</td>
+        <td>|Δρ| &gt; 0.2 on an important pair = material <span class="tag h">heuristic</span>.</td></tr>
+    <tr><td><strong>Global correlation-matrix difference</strong>: Frobenius norm ‖R<sub>t</sub> − R<sub>s</sub>‖<sub>F</sub> with permutation p-value <span class="tag s">statistical</span></td>
+        <td>A single omnibus test for a changed dependence structure.</td>
+        <td>Compare to the source-vs-source null. Avoid Box's M (overly sensitive to non-normality).</td></tr>
+  </table>
+</section>
+
+<!-- 7 -->
+<section id="ood">
+  <h2>7. Support and out-of-distribution (OOD) checks</h2>
+  <p>Tree ensembles do <strong>not extrapolate</strong>: beyond the training range, predictions stay flat at the edge value.
+     Rows outside the training support get confident-looking but unsupported predictions.</p>
+  <table>
+    <tr><th>Check</th><th>Procedure</th><th>Statistical test / baseline</th><th>Rule of thumb</th></tr>
+    <tr><td>Per-feature range coverage</td>
+        <td>Share of target rows below the source 0.5th percentile or above the 99.5th percentile.</td>
+        <td>Expected share under H<sub>0</sub> = 1%. One-sided <strong>binomial test</strong> vs p = 0.01 <span class="tag s">statistical</span>.</td>
+        <td>&gt; 2× expected (2%) on an important feature = review <span class="tag h">heuristic</span>.</td></tr>
+    <tr><td>Joint novelty (Isolation Forest, or k-NN distance)</td>
+        <td>Fit on source train rows; set the threshold at the 1st percentile of <code>score_samples</code> on the source <em>holdout</em>;
+            compute the share of target rows below it.</td>
+        <td>Expected ≈ 1% under H<sub>0</sub>; binomial test vs 0.01 <span class="tag s">statistical</span>.</td>
+        <td>&lt; 2% fine; 2–5% caution; &gt; 5% material OOD share <span class="tag h">heuristic</span>.</td></tr>
+    <tr><td>Overlap of domain-classifier scores</td>
+        <td>Share of target rows with P(target | x) &gt; 0.95 (essentially no comparable source rows).</td>
+        <td>Compare to the null baseline.</td>
+        <td>Treat those rows as unsupported. Flag them, abstain, or route them to a fallback.</td></tr>
+  </table>
+  <div class="callout">
+    Even when aggregate tests pass, a <strong>subset</strong> of target rows can be OOD. Report the share and profile of those rows
+    and decide on them separately (row-level guardrail).
+  </div>
+</section>
+
+<!-- 8 -->
+<section id="model">
+  <h2>8. Model-centric checks (does the shift matter <em>to this model</em>?)</h2>
+  <h3>8.1 Weight drift by feature importance</h3>
+  <p>Compute mean |SHAP| per feature on the source holdout and cross it with the drift effect sizes from Section 5:</p>
+  <table>
+    <tr><th></th><th>Low drift (within null)</th><th>High drift (beyond null, non-trivial effect)</th></tr>
+    <tr><th>High model importance (top features covering ~80% of total mean |SHAP|)</th><td class="g">OK</td><td class="r">Critical: drives the decision</td></tr>
+    <tr><th>Low model importance</th><td class="g">OK</td><td class="a">Document; usually harmless</td></tr>
+  </table>
+  <h3>8.2 Prediction (score) distribution shift</h3>
+  <table>
+    <tr><th>Method</th><th>Interpretation</th><th>Rule of thumb / baseline</th></tr>
+    <tr><td>KS / Anderson–Darling on predicted probabilities (source holdout vs target) <span class="tag s">statistical</span></td>
+        <td>The model behaves differently on the new population. Not necessarily worse: the case mix may simply differ.</td>
+        <td>Compare to the null baseline.</td></tr>
+    <tr><td>Score PSI (on source score deciles) <span class="tag h">heuristic</span></td>
+        <td>The most widely used monitoring metric in credit/risk scoring.</td>
+        <td>&lt; 0.10 stable; 0.10–0.25 monitor; &gt; 0.25 action.</td></tr>
+    <tr><td>Predicted-positive rate at the operating threshold: two-proportion z-test, Cohen's h <span class="tag s">statistical</span></td>
+        <td>Directly affects operations (volume flagged, capacity, cost).</td>
+        <td>h ≥ 0.2 = operationally relevant.</td></tr>
+    <tr><td>Share of predictions near the decision threshold (e.g. ±0.05)</td>
+        <td>More borderline cases = more expected misclassifications.</td>
+        <td>Compare to the source holdout share (two-proportion test).</td></tr>
+  </table>
+  <h3>8.3 Attribution (SHAP) drift</h3>
+  <ul>
+    <li>Compare per-feature SHAP value distributions (KS test, BH-corrected) and the mean |SHAP| ranking (Spearman rank correlation
+        between source and target importance rankings; ρ &lt; 0.8 = noticeably different reasoning <span class="tag h">heuristic</span>).</li>
+    <li>SHAP drift is more model-relevant than raw feature drift: it measures the shift <em>through the lens of the learned function</em>.</li>
+    <li>Overlay target rows on partial-dependence / ICE plots. Mass in flat (extrapolated) or sparse regions of the source is a warning sign.</li>
+  </ul>
+</section>
+
+<!-- 9 -->
+<section id="perf">
+  <h2>9. Label-free performance estimation</h2>
+  <p>These methods return <strong>estimates under assumptions</strong>, not measurements. Always state the assumption and report a CI.</p>
+
+  <h3>9.1 Importance-weighted validation (covariate shift correction)</h3>
+  <p><em>Assumes:</em> covariate shift only, and overlap (every target region has some source data).
+     (Shimodaira 2000; Sugiyama et al. 2007.)</p>
+  <ol>
+    <li>From the domain classifier (Section 6.1), compute out-of-fold p(x) = P(target | x) for <em>source holdout</em> rows.</li>
+    <li>Density ratio: <code>w(x) = p/(1−p) · n<sub>source</sub>/n<sub>target</sub></code>. Clip extreme weights (e.g. at the 99th percentile) and report the clipping.</li>
+    <li>Estimated target metric: weighted AUC / log-loss / Brier score on the labelled source holdout
+        (e.g. <code>roc_auc_score(y, pred, sample_weight=w)</code>). Bootstrap for a CI.</li>
+    <li>Compare to the unweighted source holdout metric: this is the <strong>baseline</strong>.</li>
+  </ol>
+  <table>
+    <tr><th>Kish effective sample size ratio ESS/n, ESS = (Σw)² / Σw²</th><th>Reliability of the weighted estimate</th></tr>
+    <tr class="g"><td>&gt; 0.5</td><td>Good overlap; estimate reliable</td></tr>
+    <tr class="a"><td>0.1–0.5</td><td>Partial overlap; wide CI, interpret with caution</td></tr>
+    <tr class="r"><td>&lt; 0.1</td><td>Poor overlap; estimate unreliable, and that is itself evidence against transfer</td></tr>
+  </table>
+  <p class="callout warn">ESS bands are heuristics. The bootstrap CI width is the formal measure of reliability.</p>
+
+  <h3>9.2 Confidence-Based Performance Estimation (CBPE)</h3>
+  <p><em>Assumes:</em> no concept shift, and the model is <strong>well calibrated</strong> on the source. If the model predicts
+     p = 0.3 for a row, it is correct about 30% of the time, so the expected confusion matrix (and AUC, F1, ...) on the target
+     can be computed from the predicted probabilities alone.</p>
+  <ul>
+    <li><strong>Prerequisite check on the source holdout:</strong> reliability diagram, Brier score, Expected Calibration Error
+        (ECE), and calibration slope ≈ 1 / intercept ≈ 0. If the model is miscalibrated, recalibrate it (isotonic or Platt) on a separate
+        source fold first.</li>
+    <li>Library: <code>nannyml</code> (CBPE). Its output includes confidence bands.</li>
+    <li>Interpretation: an estimated target metric within the source holdout CI means no expected degradation.</li>
+    <li>Limitation: CBPE cannot see shifts the model is <em>confidently wrong</em> about. Combine it with Sections 7 and 9.1.</li>
+  </ul>
+
+  <h3>9.3 Label (prior) shift: Black Box Shift Estimation (BBSE)</h3>
+  <p><em>Assumes:</em> P(X|y) unchanged (Lipton et al., 2018).</p>
+  <ol>
+    <li>On the source holdout, compute the confusion matrix C<sub>ij</sub> = P(ŷ = i, y = j).</li>
+    <li>On the target, compute μ<sub>i</sub> = P(ŷ = i).</li>
+    <li>Solve w = C<sup>−1</sup>μ. The estimated target prior is q<sub>j</sub> = w<sub>j</sub> · P<sub>s</sub>(y = j).
+        C must be invertible (the model must be better than random).</li>
+    <li>Bootstrap the estimate. If the 95% CI of the target prevalence excludes the source prevalence, there is significant prior shift.</li>
+  </ol>
+  <p>Consequence: with prior shift alone, ranking (AUC) is preserved but calibration and threshold-based metrics are not.
+     Adjust the intercept or threshold using the estimated prior.</p>
+
+  <h3>9.4 Comparison summary</h3>
+  <table>
+    <tr><th>Method</th><th>Key assumption</th><th>Fails when</th></tr>
+    <tr><td>Importance weighting</td><td>Covariate shift + overlap</td><td>Low ESS, concept shift</td></tr>
+    <tr><td>CBPE</td><td>Calibration + no concept shift</td><td>Miscalibration, confidently wrong regions</td></tr>
+    <tr><td>BBSE</td><td>Label shift only</td><td>Covariate/concept shift</td></tr>
+  </table>
+  <p>If two methods agree, confidence increases. If they disagree, report both and treat the result as inconclusive.</p>
+</section>
+
+<!-- 10 -->
+<section id="decision">
+  <h2>10. Decision framework (pre-register before looking at target results)</h2>
+  <table>
+    <tr><th>Evidence</th><th class="g">Similar — use model</th><th class="a">Use with caution</th><th class="r">Different — do not use as is</th></tr>
+    <tr><td>Univariate drift on high-SHAP features</td><td>Within null or equivalent (TOST)</td><td>Beyond null, small effect (|SMD| &lt; 0.2, PSI &lt; 0.25)</td><td>Large effect (|SMD| ≥ 0.5, PSI &gt; 0.25)</td></tr>
+    <tr><td>Domain classifier AUC</td><td>≤ null 95th percentile / ≤ 0.55</td><td>0.55–0.80</td><td>&gt; 0.80</td></tr>
+    <tr><td>MMD / energy test</td><td>p ≥ 0.05 or effect within null</td><td>p &lt; 0.05, small effect</td><td>p &lt; 0.05, large effect</td></tr>
+    <tr><td>Joint OOD share</td><td>&lt; 2%</td><td>2–5%</td><td>&gt; 5%</td></tr>
+    <tr><td>Score PSI</td><td>&lt; 0.10</td><td>0.10–0.25</td><td>&gt; 0.25</td></tr>
+    <tr><td>ESS ratio (weighting)</td><td>&gt; 0.5</td><td>0.1–0.5</td><td>&lt; 0.1</td></tr>
+    <tr><td>Estimated metric (weighted / CBPE)</td><td>CI overlaps source holdout CI; drop &lt; pre-set tolerance</td><td>Point drop within tolerance but CI crosses it</td><td>CI entirely beyond tolerance</td></tr>
+    <tr><td>Estimated prior (BBSE)</td><td>CI includes source prior</td><td>Shifted; recalibrate threshold</td><td>Large shift plus other red signals</td></tr>
+  </table>
+  <h3>Aggregation rule (example)</h3>
+  <ul>
+    <li><strong>Use as is:</strong> no red, at most two amber signals, none on top-importance features.</li>
+    <li><strong>Use with mitigation:</strong> amber signals, no red → recalibrate or adjust the threshold for prior shift, add a row-level OOD guardrail,
+        monitor score PSI, and collect a small labelled sample.</li>
+    <li><strong>Do not use as is:</strong> any red on the domain AUC, OOD share, ESS, or estimated performance → retrain or adapt
+        (requires target labels, or at least domain-weighted retraining on source data), or restrict use to the supported subset.</li>
+  </ul>
+  <div class="callout warn">
+    <strong>All numeric thresholds above are conventions</strong> (cited where a source exists). Replace them with
+    domain-specific tolerances where possible: e.g. "an AUC loss of 0.02 costs X". The source-vs-source null baseline is the
+    statistically grounded reference.
+  </div>
+  <div class="callout ok">
+    <strong>Strongest possible label-free claim:</strong> "The new population is statistically equivalent to the training population on
+    the model-relevant features within margin δ; the joint distribution is indistinguishable beyond sampling noise; X% of rows are out of
+    support; estimated performance is M [95% CI], assuming no concept shift."
+  </div>
+</section>
+
+<!-- 11 -->
+<section id="report">
+  <h2>11. Reporting checklist</h2>
+  <ul>
+    <li>Data sources, extraction dates, row counts, and dataset hashes for both populations.</li>
+    <li>Source split used as the reference (holdout, not training rows).</li>
+    <li>Seed(s), number of bootstrap/permutation rounds, CV scheme, binning choices, kernel bandwidth, weight clipping.</li>
+    <li>All tests run (total count) with raw and BH-corrected p-values, effect sizes with 95% CIs, and null-baseline percentiles.</li>
+    <li>Pre-registered decision thresholds and equivalence margins, with their justification.</li>
+    <li>Per-feature drift × importance table; domain-classifier SHAP drivers; OOD share and profile.</li>
+    <li>Label-free performance estimates with their assumptions and CIs; agreement between methods.</li>
+    <li>Explicit statement: <em>concept shift cannot be assessed without target labels.</em></li>
+    <li>Recommendation and mitigation plan: monitoring metrics, alert thresholds, and a labelling plan for a verification sample.</li>
+  </ul>
+</section>
+
+<!-- 12 -->
+<section id="refs">
+  <h2>12. References</h2>
+  <ol>
+    <li>Austin, P. C. (2009). Balance diagnostics for comparing the distribution of baseline covariates between treatment groups in propensity-score matched samples. <em>Statistics in Medicine</em>, 28(25).</li>
+    <li>Benjamini, Y., &amp; Hochberg, Y. (1995). Controlling the false discovery rate. <em>JRSS B</em>, 57(1).</li>
+    <li>Cohen, J. (1988). <em>Statistical Power Analysis for the Behavioral Sciences</em> (2nd ed.).</li>
+    <li>Fieller, E. C., Hartley, H. O., &amp; Pearson, E. S. (1957). Tests for rank correlation coefficients. <em>Biometrika</em>, 44.</li>
+    <li>Gretton, A., et al. (2012). A kernel two-sample test. <em>JMLR</em>, 13.</li>
+    <li>Hosmer, D. W., &amp; Lemeshow, S. (2000). <em>Applied Logistic Regression</em> (2nd ed.).</li>
+    <li>Kish, L. (1965). <em>Survey Sampling</em>.</li>
+    <li>Lipton, Z., Wang, Y.-X., &amp; Smola, A. (2018). Detecting and correcting for label shift with black box predictors. <em>ICML</em>.</li>
+    <li>Liu, F. T., Ting, K. M., &amp; Zhou, Z.-H. (2008). Isolation Forest. <em>ICDM</em>.</li>
+    <li>Lopez-Paz, D., &amp; Oquab, M. (2017). Revisiting classifier two-sample tests. <em>ICLR</em>.</li>
+    <li>Lundberg, S. M., &amp; Lee, S.-I. (2017). A unified approach to interpreting model predictions. <em>NeurIPS</em>.</li>
+    <li>Rabanser, S., Günnemann, S., &amp; Lipton, Z. (2019). Failing loudly: An empirical study of methods for detecting dataset shift. <em>NeurIPS</em>.</li>
+    <li>Schuirmann, D. J. (1987). A comparison of the two one-sided tests procedure and the power approach for assessing equivalence. <em>J. Pharmacokinetics and Biopharmaceutics</em>, 15.</li>
+    <li>Scholz, F. W., &amp; Stephens, M. A. (1987). K-sample Anderson–Darling tests. <em>JASA</em>, 82.</li>
+    <li>Shimodaira, H. (2000). Improving predictive inference under covariate shift by weighting the log-likelihood function. <em>J. Statistical Planning and Inference</em>, 90.</li>
+    <li>Siddiqi, N. (2006). <em>Credit Risk Scorecards</em>. Wiley. (PSI thresholds.)</li>
+    <li>Sugiyama, M., Krauledat, M., &amp; Müller, K.-R. (2007). Covariate shift adaptation by importance weighted cross validation. <em>JMLR</em>, 8.</li>
+    <li>Székely, G. J., &amp; Rizzo, M. L. (2013). Energy statistics: A class of statistics based on distances. <em>J. Statistical Planning and Inference</em>, 143.</li>
+    <li>NannyML documentation: Confidence-Based Performance Estimation (CBPE).</li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>Standalone document. No external resources required. Code sketches are illustrative and must be validated on your data.</footer>
+</body>
+</html>
