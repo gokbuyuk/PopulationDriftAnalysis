@@ -87,14 +87,16 @@ The compare command prints a verdict, the signals, and the flagged features. The
 
 A green label is not a measurement of accuracy on the new population. Concept shift, a change in P(y|x), cannot be seen without labels. The performance numbers in the report are estimates under the assumptions in [docs/reference.md](docs/reference.md).
 
-## Synthetic demo
+## Example data
 
-About two minutes. This checks the pipeline; it is not a result about any real population.
+`examples/make_synthetic_data.py` is not part of the analysis. The package does not import it. It only writes files so the commands below can be run without a real dataset. Output goes to `demo_data/`, which is gitignored.
+
+`train.csv` is the labelled slice the example model was fitted on. `new.csv` has 700 unlabelled rows by default, so the baseline subset size below matches that file. `evaluation.csv` is a later labelled slice and is not used by this command.
 
 ```bash
-python -m population_drift.synthetic --out demo_data
+python examples/make_synthetic_data.py --out demo_data
 COMMON="--train demo_data/train.csv --features-file demo_data/features.txt --categorical c01,c02,c03,c04 --label-col target --model demo_data/model.txt"
-python -m population_drift baseline $COMMON --subset-size 2500 --n-rounds 20 --out runs/baseline
+python -m population_drift baseline $COMMON --subset-size 700 --n-rounds 20 --out runs/baseline
 python -m population_drift compare $COMMON --new demo_data/new.csv --baseline runs/baseline --out runs/comparison --report runs/report.html
 ```
 
@@ -104,7 +106,7 @@ python -m population_drift compare $COMMON --new demo_data/new.csv --baseline ru
 |---|---|
 | `population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
 | `population_drift/report.py` | HTML report (`python -m population_drift.report`) |
-| `population_drift/synthetic.py` | Synthetic populations and a demo model |
+| `examples/make_synthetic_data.py` | Example files only. Not imported by the toolkit. |
 | `docs/reference.md` | Methods, decision rule, configuration, output columns |
 
 ## Python API
