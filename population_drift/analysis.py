@@ -12,8 +12,8 @@ The module provides:
 
 Command line (see README.md):
 
-    python population_drift.py baseline --train train.csv --features-file features.txt --out runs/baseline
-    python population_drift.py compare --train train.csv --new new.csv --features-file features.txt \\
+    python -m population_drift baseline --train train.csv --features-file features.txt --out runs/baseline
+    python -m population_drift compare --train train.csv --new new.csv --features-file features.txt \\
         --baseline runs/baseline --out runs/comparison --report runs/report.html
 """
 from __future__ import annotations
@@ -2145,7 +2145,10 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--report", help="Write the HTML report to this path after the run.")
     common.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
-    parser = argparse.ArgumentParser(description="Population drift analysis for model transferability.")
+    parser = argparse.ArgumentParser(
+        prog="python -m population_drift",
+        description="Population drift analysis for model transferability.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     baseline = sub.add_parser("baseline", parents=[common], help="Build the source-vs-source baseline.")
     baseline.add_argument("--out", required=True, help="Output directory for the baseline.")
@@ -2186,13 +2189,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                                   args.subset_size, args.subset_fraction, config, args.out)
         print(format_baseline_summary(baseline))
         if args.report:
-            from drift_report import build_report
+            from population_drift.report import build_report
             build_report(args.report, baseline_dir=args.out)
     else:
         run_comparison(source, target, features, categorical, model, args.label_col, config, args.baseline,
                        args.out, args.n_rounds)
         if args.report:
-            from drift_report import build_report
+            from population_drift.report import build_report
             build_report(args.report, comparison_dir=args.out)
     return 0
 

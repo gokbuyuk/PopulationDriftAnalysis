@@ -1,8 +1,8 @@
-"""Build a standalone HTML report from the outputs of ``population_drift.py``.
+"""Build a standalone HTML report from the outputs of ``python -m population_drift``.
 
 Usage:
-    python drift_report.py --comparison runs/comparison --out runs/report.html   # full analysis report
-    python drift_report.py --baseline runs/baseline --out runs/baseline.html     # baseline-only report
+    python -m population_drift.report --comparison runs/comparison --out runs/report.html
+    python -m population_drift.report --baseline runs/baseline --out runs/baseline.html
 
 The report embeds all plots (PNG, base64) and styles, so it is a single self-contained file.
 """
@@ -102,7 +102,7 @@ class ComparisonRun:
 
 
 def load_baseline_run(directory: str | Path) -> BaselineRun:
-    """Load a baseline directory written by ``population_drift.py baseline``."""
+    """Load a baseline directory written by ``python -m population_drift baseline``."""
     directory = Path(directory)
     for name in ("baseline_statistics.csv", "baseline_summary.csv", "baseline_metadata.json"):
         if not (directory / name).exists():
@@ -113,7 +113,7 @@ def load_baseline_run(directory: str | Path) -> BaselineRun:
 
 
 def load_comparison_run(directory: str | Path) -> ComparisonRun:
-    """Load a comparison directory written by ``population_drift.py compare``."""
+    """Load a comparison directory written by ``python -m population_drift compare``."""
     directory = Path(directory)
     for name in ("decision.json", "metadata.json", "feature_assessment.csv", "tables"):
         if not (directory / name).exists():
@@ -966,7 +966,7 @@ def baseline_only_sections(baseline: BaselineRun) -> list[Section]:
              f"{len(meta['feature_cols'])} features · model: {'yes' if meta['has_model'] else 'no'}</div></div>"
              "<p>This report shows how much each drift statistic varies between random subsets of the <i>same</i> "
              "population. These distributions are the reference for the new population: once it is available, run "
-             "<code>population_drift.py compare --baseline &lt;this directory&gt;</code>. Build the baseline with "
+             "<code>python -m population_drift compare --baseline &lt;this directory&gt;</code>. Build the baseline with "
              "<code>--subset-size</code> close to the expected new-population size, because many statistics shrink as "
              "sample size grows.</p>"
              + (f"<div class='callout warn'>Tasks that failed in some rounds: {html.escape(str(failed))}</div>" if failed else ""))
@@ -1023,7 +1023,7 @@ def render_page(title: str, subtitle: str, sections: Sequence[Section]) -> str:
             f'<meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)}</title>'
             f'<style>{CSS}</style></head><body><header><h1>{html.escape(title)}</h1><p>{html.escape(subtitle)}</p></header>'
             f'<div class="layout"><nav><strong>Contents</strong>{nav}</nav><main>{body}</main></div>'
-            f'<footer>Generated {generated} by drift_report.py · standalone file, no external resources</footer>'
+            f'<footer>Generated {generated} by population_drift.report · standalone file, no external resources</footer>'
             '</body></html>')
 
 
@@ -1033,7 +1033,7 @@ def build_report(output_path: str | Path, comparison_dir: str | Path | None = No
 
     Args:
         output_path: Destination HTML file.
-        comparison_dir: Output directory of ``population_drift.py compare`` (full report).
+        comparison_dir: Output directory of ``python -m population_drift compare`` (full report).
         baseline_dir: Baseline directory; defaults to the one recorded in the comparison's decision.json.
         title: Optional report title.
         top_k: Number of features shown in distribution plots.
@@ -1077,7 +1077,10 @@ def build_report(output_path: str | Path, comparison_dir: str | Path | None = No
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build the HTML drift report.")
+    parser = argparse.ArgumentParser(
+        prog="python -m population_drift.report",
+        description="Build the HTML drift report.",
+    )
     parser.add_argument("--comparison", help="Comparison output directory.")
     parser.add_argument("--baseline", help="Baseline directory (optional with --comparison).")
     parser.add_argument("--out", required=True, help="Output HTML path.")

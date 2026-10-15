@@ -13,7 +13,7 @@ Planted shifts in the new population (absent with --no-shift):
     c02  new level "Z" in 6% of rows
 
 Usage:
-    python make_synthetic_data.py --out demo_data
+    python -m population_drift.synthetic --out demo_data
 """
 from __future__ import annotations
 
@@ -77,7 +77,11 @@ def train_model(train: pd.DataFrame, seed: int) -> lgb.Booster:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        prog="python -m population_drift.synthetic",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--out", default="demo_data")
     parser.add_argument("--n-train", type=int, default=6000)
     parser.add_argument("--n-new", type=int, default=2500)

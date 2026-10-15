@@ -218,3 +218,23 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local agent specification. Not part of the toolkit users clone.
+docs/AGENT_INSTRUCTIONS.md
+
+# Datasets, fitted artifacts, and generated analysis outputs.
+# Commit the toolkit only. Users run it on their own files locally.
+data/
+demo_data/
+runs/
+reports/
+*.csv
+*.tsv
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.joblib
+*.xlsx
+*.xls
+*.html
