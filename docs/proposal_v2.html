@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal: concise population drift decision</title>
+<style>
+  body { font: 15px/1.45 "Iowan Old Style", Palatino, Georgia, serif; color: #1c1c1c; max-width: 42rem; margin: 2.5rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.35rem; font-weight: 600; line-height: 1.25; margin: 0 0 0.35rem; }
+  h2 { font-size: 1.02rem; font-weight: 600; margin: 1.5rem 0 0.4rem; }
+  p, li { margin: 0.35rem 0; }
+  .meta { color: #444; font-size: 0.92rem; margin-bottom: 1.1rem; }
+  ul { padding-left: 1.2rem; }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.88em; }
+</style>
+</head>
+<body>
+<h1>Proposal: concise population drift decision</h1>
+<p class="meta">16 October 2026. Standalone approval note for deciding whether a deployed LightGBM model may score an unlabelled population with the same feature contract.</p>
+
+<h2>Purpose</h2>
+<p>Decide whether the deployed LightGBM model may score an unlabelled population with the same feature contract. The run measures distribution differences and combines them into a severe, moderate, or mild decision.</p>
+
+<h2>Required inputs</h2>
+<ul>
+  <li>Fit set.</li>
+  <li>Optional independent evaluation set.</li>
+  <li>New unlabelled set.</li>
+  <li>Exact model feature list, categorical declarations, and missing sentinels.</li>
+  <li>Deployed model and label column.</li>
+  <li>Operating threshold and performance tolerance.</li>
+</ul>
+
+<h2>Protocol</h2>
+<p>Validate schema; build target-size-matched source baselines; run feature, joint, support, model-output, attribution, and label-free performance checks; aggregate the resulting signals.</p>
+
+<h2>Reference assignment</h2>
+<p>Without <code>--test</code>, every comparison uses the labelled set. With <code>--test</code>, feature, joint, and support tasks use fit versus new; score, attribution, and performance tasks use evaluation versus new; calibration uses evaluation only.</p>
+
+<h2>Decision rule</h2>
+<p>Severe if any counted signal is severe. Mild if no signal is severe, at most two are moderate, and no moderate signal is model-important. Moderate otherwise.</p>
+
+<h2>Outputs</h2>
+<p>The run writes <code>decision.json</code>, task tables, baseline summaries, metadata, and the generated report.</p>
+
+<h2>Limitation</h2>
+<p>The run measures distribution differences and estimates performance under explicit assumptions; it cannot identify concept shift or measure performance on the new population without labels.</p>
+
+<h2>Approval defaults</h2>
+<p>Seed 42, at least 30 baseline rounds, decision threshold 0.5 unless production differs, and performance tolerance 0.02 unless a domain-specific tolerance is approved.</p>
+</body>
+</html>
