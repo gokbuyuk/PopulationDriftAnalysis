@@ -3,50 +3,92 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Proposal: concise population drift decision</title>
+<title>Proposal: population drift assessment before model transfer</title>
 <style>
-  body { font: 15px/1.45 "Iowan Old Style", Palatino, Georgia, serif; color: #1c1c1c; max-width: 42rem; margin: 2.5rem auto; padding: 0 1.25rem; }
+  body { font: 15px/1.45 "Iowan Old Style", Palatino, Georgia, serif; color: #1c1c1c; max-width: 46rem; margin: 2.5rem auto; padding: 0 1.25rem; }
   h1 { font-size: 1.35rem; font-weight: 600; line-height: 1.25; margin: 0 0 0.35rem; }
   h2 { font-size: 1.02rem; font-weight: 600; margin: 1.5rem 0 0.4rem; }
   p, li { margin: 0.35rem 0; }
   .meta { color: #444; font-size: 0.92rem; margin-bottom: 1.1rem; }
-  ul { padding-left: 1.2rem; }
+  ul, ol { padding-left: 1.2rem; }
+  table { border-collapse: collapse; width: 100%; margin: 0.4rem 0; font-size: 0.92rem; }
+  th, td { text-align: left; vertical-align: top; padding: 0.28rem 0.6rem 0.28rem 0; border-bottom: 1px solid #ddd; }
+  th { font-weight: 600; }
+  dt { font-weight: 600; margin-top: 0.6rem; }
+  dd { margin: 0.15rem 0 0 0; }
   code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.88em; }
 </style>
 </head>
 <body>
-<h1>Proposal: concise population drift decision</h1>
-<p class="meta">16 October 2026. Standalone approval note for deciding whether a deployed LightGBM model may score an unlabelled population with the same feature contract.</p>
+<h1>Proposal: population drift assessment before transferring a LightGBM model</h1>
+<p class="meta">16 October 2026. Status: implemented in <code>population_drift</code> and exercised on synthetic data only. No production population has been scored. Full method detail: <code>reports/population_shift_assessment_v2.html</code> and <code>docs/reference.md</code>.</p>
 
-<h2>Purpose</h2>
-<p>Decide whether the deployed LightGBM model may score an unlabelled population with the same feature contract. The run measures distribution differences and combines them into a severe, moderate, or mild decision.</p>
+<h2>Decision and scope</h2>
+<p>Decide whether a deployed LightGBM model (binary or regression) can score a new, unlabelled population that has the same feature contract. The output is a pre-specified <code>severe</code> / <code>moderate</code> / <code>mild</code> verdict with a traceable signal list. <code>severe</code>: do not use as is. <code>moderate</code>: use only with review. <code>mild</code>: no evidence of shift that the model is sensitive to; monitor.</p>
+<p>The run identifies covariate shift (P(x)) and, under its assumption, label shift (P(y)). It cannot identify concept shift (P(y|x)) or measure accuracy on the new population. A <code>mild</code> verdict is not evidence that discrimination or calibration carried over.</p>
 
-<h2>Required inputs</h2>
-<ul>
-  <li>Fit set.</li>
-  <li>Optional independent evaluation set.</li>
-  <li>New unlabelled set.</li>
-  <li>Exact model feature list, categorical declarations, and missing sentinels.</li>
-  <li>Deployed model and label column.</li>
-  <li>Operating threshold and performance tolerance.</li>
-</ul>
-
-<h2>Protocol</h2>
-<p>Validate schema; build target-size-matched source baselines; run feature, joint, support, model-output, attribution, and label-free performance checks; aggregate the resulting signals.</p>
+<h2>Approach</h2>
+<ol>
+  <li><strong>Freeze the contract first.</strong> Feature list, categorical columns, missing sentinels, operating threshold, performance tolerance, <code>Thresholds</code>, and seed are fixed before the new file is summarised, so cutoffs cannot be tuned to the result.</li>
+  <li><strong>Size-matched empirical null.</strong> Each of ≥ 30 rounds randomly partitions the reference into a pseudo-new subset of size <em>n</em><sub>new</sub> and a remainder, and recomputes every point statistic. A statistic counts as shifted only if it exceeds the null 95th percentile. Empirical p = (1 + #null ≥ observed)/(1 + rounds), so the minimum is 1/31. This replaces fixed PSI/KS cutoffs, which are biased by sample size.</li>
+  <li><strong>Marginal tests per feature.</strong> Continuous: KS, Anderson–Darling, Cramér–von Mises, SMD with TOST equivalence (±0.1 SD), variance ratio, Wasserstein/SD, PSI (10 source-quantile bins). Categorical: χ² after merging sparse levels, Cramér’s V, Jensen–Shannon, PSI, unseen-level share. Missingness: two-proportion z and Cohen’s h, separate from values, because LightGBM routes missing values down a learned branch. Benjamini–Hochberg is applied within each test family.</li>
+  <li><strong>Joint distribution and support.</strong> Domain classifier: fixed-hyperparameter LightGBM, stratified 5-fold out-of-fold ROC AUC, 20 label-permutation refits. Kernel tests: MMD² and energy distance. Dependence: Spearman Frobenius norm and per-pair Fisher z. Support: share of values outside the training 0.5–99.5% quantiles, and an Isolation Forest with its threshold set on a held-out 30% training slice (null share 1% by construction). Trees do not extrapolate, so support matters.</li>
+  <li><strong>Model-centric tests.</strong> Score KS/PSI. Positive rate and near-cutoff share (±0.05) at the deployed threshold. TreeSHAP contribution KS and rank correlation of mean |SHAP|. A model-important feature belongs to the smallest set reaching 80% of mean |SHAP|.</li>
+  <li><strong>Label-free performance estimates, kept separate.</strong> Importance weighting (assumes covariate shift; domain-classifier density ratio, clipped at the 0.99 quantile, Kish ESS). CBPE (assumes calibrated scores; downgraded to <code>info</code> if source ECE &gt; 0.05). BBSE (assumes label shift, P(x|y) unchanged). If they disagree, the result is reported as inconclusive, not averaged.</li>
+  <li><strong>Aggregate by a fixed rule</strong> (below). If the verdict is not <code>mild</code>, label a simple random sample of the new population. That is the only test of concept shift.</li>
+</ol>
 
 <h2>Reference assignment</h2>
-<p>Without <code>--test</code>, every comparison uses the labelled set. With <code>--test</code>, feature, joint, and support tasks use fit versus new; score, attribution, and performance tasks use evaluation versus new; calibration uses evaluation only.</p>
+<table>
+  <tr><th>Tests</th><th>One labelled file</th><th>Fit set + independent evaluation set (<code>--test</code>)</th></tr>
+  <tr><td>Margins, missingness, domain classifier, kernel, dependence, support</td><td>Labelled vs new</td><td>Fit vs new</td></tr>
+  <tr><td>Scores, positive rate, TreeSHAP, weighting, CBPE, BBSE</td><td>Labelled vs new</td><td>Evaluation vs new</td></tr>
+  <tr><td>Calibration</td><td>Labelled</td><td>Evaluation</td></tr>
+</table>
+<p>The paired mode is recommended. Scores, SHAP, and calibration on the fit set are in-sample and therefore optimistic. Each reference gets its own size-matched baseline.</p>
 
-<h2>Decision rule</h2>
-<p>Severe if any counted signal is severe. Mild if no signal is severe, at most two are moderate, and no moderate signal is model-important. Moderate otherwise.</p>
+<h2>Verdict rule</h2>
+<p>A feature is <code>severe</code> only if three conditions hold together: the BH-adjusted test rejects at α = 0.05, the statistic exceeds the baseline 95th percentile, and the effect is large (PSI ≥ 0.25, KS D ≥ 0.20, or |SMD| ≥ 0.50; categorical PSI ≥ 0.25 or V ≥ 0.30; missingness |h| ≥ 0.50).</p>
+<table>
+  <tr><th>Can make the verdict <code>severe</code></th><th>Capped at <code>moderate</code></th></tr>
+  <tr><td>Drift on a model-important feature. Missingness |h| ≥ 0.5 on an important feature. Domain AUC &gt; 0.80. Out-of-support share &gt; 5%. Score PSI &gt; 0.25. ESS ratio &lt; 0.10. A weighted or CBPE performance 95% CI lying entirely beyond tolerance.</td>
+      <td>Drift on low-importance features, MMD/energy, dependence, range coverage, positive rate (|h| ≥ 0.20), SHAP drift, unseen levels &gt; 1%, BBSE prior shift.</td></tr>
+</table>
+<p><strong>Verdict:</strong> <code>severe</code> if any counted signal is severe. <code>mild</code> if there is no severe signal, at most two moderate signals, and none of those is on a model-important feature. <code>moderate</code> otherwise. Calibration and degraded CBPE are <code>info</code> and are not counted.</p>
 
-<h2>Outputs</h2>
-<p>The run writes <code>decision.json</code>, task tables, baseline summaries, metadata, and the generated report.</p>
+<h2>Anticipated questions</h2>
+<dl>
+  <dt>Why not the standard PSI 0.10 / 0.25 rule?</dt>
+  <dd>PSI, KS D, and AUC grow as <em>n</em> shrinks and vary by feature. The cutoffs (Siddiqi 2006) are kept as effect-size floors, but a flag also requires significance and exceedance of a size-matched null.</dd>
+  <dt>What is the false-alarm behaviour?</dt>
+  <dd>The verdict is a decision rule, not a level-α test, and there is no family-wise control across signals. On 10 synthetic same-distribution pairs (2,500 vs 1,000 rows, 10-round baselines) none was <code>severe</code> and 3 were <code>moderate</code>. This is indicative only, not the operating configuration. A single weak moderate is a review item.</dd>
+  <dt>Is the domain classifier leaky or tuned?</dt>
+  <dd>No. The target is population membership, never the business label. Scores are out-of-fold and hyperparameters are fixed (no search). Significance comes from label-permutation refits plus the baseline. Identifiers, time columns, and score- or label-derived columns must be excluded, because they trivially separate the populations.</dd>
+  <dt>What does the baseline null assume?</dt>
+  <dd>Exchangeability within the reference. Drift already present inside the reference window widens the null, so a further shift can look ordinary. Use a reference window over which the model is known to have performed acceptably.</dd>
+  <dt>Selection bias (approved-only labels, reject inference)?</dt>
+  <dd>Not addressed. The labelled reference is whatever population carried outcomes. If that is booked accounts and the new file is through-the-door applicants, the comparison mixes policy effects with population shift. Compare like-for-like populations.</dd>
+  <dt>Segments and fair-lending slices?</dt>
+  <dd>There is no built-in segment analysis. Run the same comparison per segment (product, channel, region) with its own baseline. Expect lower power at small <em>n</em>. The README asks for at least 30 new rows, but the code does not enforce it.</dd>
+  <dt>Power limits?</dt>
+  <dd>Row caps: kernel tests 2,000 per group, correlations 20,000, SHAP 5,000, Isolation Forest 100,000, domain classifier 200,000. A shift visible only above a cap can be missed by that task.</dd>
+  <dt>Sample-size requirements?</dt>
+  <dd>Paired mode raises an error if a reference has fewer than <em>n</em><sub>new</sub> + 30 rows. Single mode instead shrinks the baseline subset to half the reference and warns. Treat that warning as a protocol deviation.</dd>
+  <dt>Reproducibility and audit trail?</dt>
+  <dd>The seed (42), the full configuration, row counts, failed tasks, and library versions (pinned in <code>requirements.txt</code>) are written to <code>metadata.json</code>. Dataset checksums and the code commit are <em>not</em> recorded automatically. Log both with each archived run. A failing task is recorded in <code>failed_tasks</code> and does not abort the others; review that list before accepting a verdict.</dd>
+</dl>
 
-<h2>Limitation</h2>
-<p>The run measures distribution differences and estimates performance under explicit assumptions; it cannot identify concept shift or measure performance on the new population without labels.</p>
+<h2>Deliverables</h2>
+<p><code>decision.json</code> (verdict, rule, signals with their reference pair, counts, warnings), <code>baseline_comparison.csv</code>, per-task tables, baseline statistics and summaries, <code>metadata.json</code>, and the HTML report. Data and outputs stay untracked.</p>
 
-<h2>Approval defaults</h2>
-<p>Seed 42, at least 30 baseline rounds, decision threshold 0.5 unless production differs, and performance tolerance 0.02 unless a domain-specific tolerance is approved.</p>
+<h2>Decisions required before the run</h2>
+<table>
+  <tr><th>Item</th><th>Default if not set</th></tr>
+  <tr><td>Operating threshold</td><td>0.5. Set it to the production cutoff.</td></tr>
+  <tr><td>Material performance loss</td><td>0.02 absolute AUC (relative error for regression). Prefer a value derived from loss or capital impact.</td></tr>
+  <tr><td>Reference window and paired mode</td><td>Paired: a later out-of-time labelled slice as the evaluation set.</td></tr>
+  <tr><td>Baseline rounds / classifier permutations</td><td>30 / 20</td></tr>
+  <tr><td>Labelled-sample size if not <code>mild</code></td><td>Not set. Size it by power against the performance tolerance.</td></tr>
+</table>
 </body>
 </html>
