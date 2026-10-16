@@ -30,7 +30,7 @@ A statistic exceeds the baseline when it is larger than the baseline 95th percen
 
 `subset_size` must match the new population’s row count. Population Stability Index (PSI), Kolmogorov–Smirnov statistic (KS D), and domain-classifier area under the curve (AUC) shrink as sample size grows. The code warns when the new size is outside half to twice the baseline subset size, and it refuses a baseline built on a different feature set.
 
-This null is sampling noise under exchangeability inside that reference. It is not the noise of drift already present inside the reference window. If that period itself moved, the baseline is wide and a further shift can look ordinary.
+This null is sampling noise under exchangeability inside that reference. Exchangeability means any row in the reference can stand in for any other. The two sides of a random split are then not systematically distinguishable, and the 95th percentile is the distinguishability that the split alone still produces. The new population exceeds the baseline when it is more distinguishable from the reference than those two pieces are from each other. This is not the noise of drift already present inside the reference window. If that period itself moved, the baseline is wide and a further shift can look ordinary.
 
 ## Feature severity
 
