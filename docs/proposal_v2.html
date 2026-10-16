@@ -54,7 +54,7 @@
   <tr><td>Drift on a model-important feature. Missingness |h| ≥ 0.5 on an important feature. Domain AUC &gt; 0.80. Out-of-support share &gt; 5%. Score PSI &gt; 0.25. ESS ratio &lt; 0.10. A weighted or CBPE performance 95% CI lying entirely beyond tolerance.</td>
       <td>Drift on low-importance features, MMD/energy, dependence, range coverage, positive rate (|h| ≥ 0.20), SHAP drift, unseen levels &gt; 1%, BBSE prior shift.</td></tr>
 </table>
-<p><strong>Verdict:</strong> <code>severe</code> if any counted signal is severe. <code>mild</code> if there is no severe signal, at most two moderate signals, and none of those is on a model-important feature. <code>moderate</code> otherwise. Calibration and degraded CBPE are <code>info</code> and are not counted.</p>
+<p><strong>Verdict:</strong> <code>severe</code> if any counted signal is severe. <code>mild</code> if there is no severe signal, at most two moderate signals, and none of them flagged model-important. That flag is set by drift, missingness, range, or SHAP changes on an important feature, and always by a score-distribution shift. <code>moderate</code> otherwise. Calibration and degraded CBPE are <code>info</code> and are not counted.</p>
 
 <h2>Anticipated questions</h2>
 <dl>
@@ -63,15 +63,15 @@
   <dt>What is the false-alarm behaviour?</dt>
   <dd>The verdict is a decision rule, not a level-α test, and there is no family-wise control across signals. On 10 synthetic same-distribution pairs (2,500 vs 1,000 rows, 10-round baselines) none was <code>severe</code> and 3 were <code>moderate</code>. This is indicative only, not the operating configuration. A single weak moderate is a review item.</dd>
   <dt>Is the domain classifier leaky or tuned?</dt>
-  <dd>No. The target is population membership, never the business label. Scores are out-of-fold and hyperparameters are fixed (no search). Significance comes from label-permutation refits plus the baseline. Identifiers, time columns, and score- or label-derived columns must be excluded, because they trivially separate the populations.</dd>
+  <dd>No. The target is population membership, never the business label. Scores are out-of-fold and hyperparameters are fixed (no search). The verdict uses the size-matched baseline and the AUC bands. The permutation p-value (minimum 1/21) is reported but does not gate. Identifiers, time columns, and score- or label-derived columns must be excluded, because they trivially separate the populations.</dd>
   <dt>What does the no-shift baseline assume?</dt>
   <dd>Exchangeability within the reference. Drift already present inside the reference window widens the baseline, so a further shift can look ordinary. Use a reference window over which the model is known to have performed acceptably.</dd>
   <dt>Selection bias (approved-only labels, reject inference)?</dt>
   <dd>Not addressed. The labelled reference is whatever population carried outcomes. If that is booked accounts and the new file is through-the-door applicants, the comparison mixes policy effects with population shift. Compare like-for-like populations.</dd>
   <dt>Segments and fair-lending slices?</dt>
-  <dd>There is no built-in segment analysis. Run the same comparison per segment (product, channel, region) with its own baseline. Expect lower power at small <em>n</em>. The README asks for at least 30 new rows, but the code does not enforce it.</dd>
+  <dd>There is no built-in segment analysis. Run the same comparison per segment (product, channel, region) with its own baseline. Expect lower power at small <em>n</em>. At least 30 new rows are required.</dd>
   <dt>Power limits?</dt>
-  <dd>Row caps: kernel tests 2,000 per group, correlations 20,000, SHAP 5,000, Isolation Forest 100,000, domain classifier 200,000. A shift visible only above a cap can be missed by that task.</dd>
+  <dd>Row caps: kernel tests 2,000 per group, correlations 20,000, SHAP 5,000, Isolation Forest 100,000, domain classifier 200,000 in total. A shift visible only above a cap can be missed by that task.</dd>
   <dt>Sample-size requirements?</dt>
   <dd>Paired mode raises an error if a reference has fewer than <em>n</em><sub>new</sub> + 30 rows. Single mode instead shrinks the baseline subset to half the reference and warns. Treat that warning as a protocol deviation.</dd>
   <dt>Reproducibility and audit trail?</dt>

@@ -6,462 +6,702 @@
   <title>Population Shift Assessment — Technical Reference</title>
   <style>
     :root {
-      --ink: #172033;
-      --muted: #58657a;
-      --line: #d9e0ea;
-      --paper: #ffffff;
-      --wash: #f4f7fb;
-      --accent: #184b8a;
-      --caution: #8a4b08;
+      --ink: #172033; --muted: #58657a; --line: #d9e0ea; --paper: #ffffff;
+      --wash: #f4f7fb; --accent: #184b8a; --caution: #8a4b08;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
-    body {
-      margin: 0;
-      color: var(--ink);
-      background: var(--wash);
-      font: 15px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    header {
-      padding: 2rem max(1.25rem, calc((100vw - 1320px) / 2));
-      color: white;
-      background: linear-gradient(120deg, #102f59, #2465a8);
-    }
-    header h1 { margin: 0 0 .35rem; font-size: clamp(1.7rem, 3vw, 2.5rem); }
-    header p { max-width: 900px; margin: 0; opacity: .92; }
-    .layout {
-      display: grid;
-      grid-template-columns: 260px minmax(0, 1fr);
-      gap: 1.25rem;
-      max-width: 1320px;
-      margin: 0 auto;
-      padding: 1.25rem;
-    }
-    nav {
-      position: sticky;
-      top: 1rem;
-      align-self: start;
-      max-height: calc(100vh - 2rem);
-      overflow: auto;
-      padding: 1rem;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--paper);
-    }
+    body { margin: 0; color: var(--ink); background: var(--wash);
+           font: 15px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    header { padding: 2rem max(1.25rem, calc((100vw - 1320px) / 2)); color: white;
+             background: linear-gradient(120deg, #102f59, #2465a8); }
+    header h1 { margin: 0 0 .35rem; font-size: clamp(1.6rem, 3vw, 2.3rem); }
+    header p { max-width: 920px; margin: .2rem 0; opacity: .93; }
+    .layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 1.25rem;
+              max-width: 1320px; margin: 0 auto; padding: 1.25rem; }
+    nav { position: sticky; top: 1rem; align-self: start; max-height: calc(100vh - 2rem); overflow: auto;
+          padding: 1rem; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); font-size: .92rem; }
     nav strong { display: block; margin-bottom: .45rem; }
-    nav a { display: block; padding: .18rem 0; color: var(--accent); text-decoration: none; }
+    nav a { display: block; padding: .15rem 0; color: var(--accent); text-decoration: none; }
     main { min-width: 0; }
-    section {
-      margin-bottom: 1.25rem;
-      padding: 1.3rem 1.5rem;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--paper);
-    }
+    section { margin-bottom: 1.25rem; padding: 1.3rem 1.5rem; border: 1px solid var(--line);
+              border-radius: 10px; background: var(--paper); }
     h2 { margin-top: 0; color: #153f73; }
-    h3 { color: #24588f; }
-    h4 { margin-bottom: .3rem; }
-    p, li { max-width: 100ch; }
-    .callout {
-      padding: .8rem 1rem;
-      border-left: 4px solid var(--accent);
-      border-radius: 5px;
-      background: #edf4fc;
-    }
+    h3 { color: #24588f; margin-top: 1.4rem; }
+    p, li { max-width: 105ch; }
+    .callout { padding: .8rem 1rem; border-left: 4px solid var(--accent); border-radius: 5px; background: #edf4fc; }
     .caution { border-left-color: var(--caution); background: #fff6e9; }
-    .table-wrap { width: 100%; overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-    th, td { padding: .48rem .55rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .table-wrap { width: 100%; overflow-x: auto; margin: .6rem 0; }
+    table { width: 100%; border-collapse: collapse; font-size: .87rem; }
+    th, td { padding: .45rem .55rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
     th { background: #edf2f8; }
     tbody tr:nth-child(even) { background: #fafbfd; }
-    code { padding: .08rem .28rem; border-radius: 3px; background: #edf1f6; }
-    pre {
-      overflow-x: auto;
-      padding: .85rem;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #f7f9fc;
-      font-size: .85rem;
-    }
-    .source { color: var(--muted); font-size: .88rem; }
-    .source a { color: var(--accent); }
-    .tag { white-space: nowrap; font-weight: 650; }
+    code { padding: .06rem .28rem; border-radius: 3px; background: #edf1f6; font-size: .9em; }
+    pre { overflow-x: auto; padding: .85rem; border: 1px solid var(--line); border-radius: 6px;
+          background: #f7f9fc; font-size: .84rem; }
+    pre code { padding: 0; background: none; }
+    dt { font-weight: 650; margin-top: .9rem; }
+    dd { margin: .2rem 0 0 0; max-width: 105ch; }
+    .source { color: var(--muted); font-size: .86rem; }
     footer { padding: 0 1.25rem 2rem; color: var(--muted); text-align: center; }
-    @media (max-width: 900px) {
-      .layout { grid-template-columns: 1fr; }
-      nav { position: static; max-height: none; columns: 2; }
-      nav strong { column-span: all; }
-    }
-    @media (max-width: 560px) {
-      nav { columns: 1; }
-      section { padding: 1rem; }
-    }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } nav { position: static; max-height: none; columns: 2; } }
+    @media (max-width: 560px) { nav { columns: 1; } section { padding: 1rem; } }
     @media print {
-      body { background: white; font-size: 10pt; }
+      body { background: white; font-size: 9.5pt; }
       header { color: black; background: white; border-bottom: 2px solid #333; }
-      nav { display: none; }
-      .layout { display: block; max-width: none; padding: 0; }
-      section { break-inside: avoid; border: 0; border-bottom: 1px solid #bbb; border-radius: 0; }
-      pre { white-space: pre-wrap; }
+      nav { display: none; } .layout { display: block; max-width: none; padding: 0; }
+      section { border: 0; border-bottom: 1px solid #bbb; border-radius: 0; }
       a { color: inherit; text-decoration: none; }
     }
   </style>
 </head>
 <body>
 <header>
-  <h1>Population Shift Assessment</h1>
-  <p>Detailed technical reference for deciding whether a LightGBM model fitted on a labelled reference population can be applied to an unlabelled new population.</p>
+  <h1>Population Shift Assessment — Technical Reference</h1>
+  <p>Complete description of how the <code>population_drift</code> toolkit decides whether a fitted LightGBM model can be applied to an unlabelled new population: every statistic, the reason it was chosen, its exact implementation, its caveats, and the rule that turns the results into a verdict.</p>
+  <p>Written against code commit <code>0d7d0e9</code> (16 October 2026). Where this document and the code disagree, the code in <code>population_drift/analysis.py</code> is authoritative.</p>
 </header>
 <div class="layout">
-  <nav aria-label="Report sections">
+  <nav aria-label="Sections">
     <strong>Contents</strong>
-    <a href="#question">1. Question and scope</a>
-    <a href="#inputs">2. Input contract</a>
-    <a href="#workflows">3. Workflows and pairs</a>
-    <a href="#baseline">4. Baseline</a>
-    <a href="#features">5. Feature tests</a>
-    <a href="#joint">6. Joint and support tests</a>
-    <a href="#model">7. Model-centric tests</a>
-    <a href="#performance">8. Performance estimates</a>
-    <a href="#signals">9. Signals and verdict</a>
-    <a href="#configuration">10. Configuration</a>
-    <a href="#api">11. CLI and Python API</a>
-    <a href="#outputs">12. Outputs and failures</a>
-    <a href="#limitations">13. Interpretation</a>
-    <a href="#references">14. References</a>
-    <a href="#source-audit">Source audit</a>
+    <a href="#summary">1. Summary</a>
+    <a href="#question">2. Question and identifiability</a>
+    <a href="#principles">3. Design principles</a>
+    <a href="#inputs">4. Data contract</a>
+    <a href="#pairs">5. Reference assignment</a>
+    <a href="#baseline">6. No-shift baseline</a>
+    <a href="#multiplicity">7. Multiple testing</a>
+    <a href="#marginal">8. Marginal feature tests</a>
+    <a href="#joint">9. Joint-distribution tests</a>
+    <a href="#support">10. Support tests</a>
+    <a href="#model">11. Model-centric tests</a>
+    <a href="#performance">12. Label-free performance</a>
+    <a href="#verdict">13. From statistics to verdict</a>
+    <a href="#thresholds">14. Thresholds and provenance</a>
+    <a href="#config">15. Configuration</a>
+    <a href="#running">16. Running the analysis</a>
+    <a href="#outputs">17. Outputs and audit trail</a>
+    <a href="#validation">18. Validation status</a>
+    <a href="#limitations">19. Limitations</a>
+    <a href="#faq">20. FAQ</a>
+    <a href="#references">21. References</a>
   </nav>
   <main>
-    <section id="question">
-      <h2>1. Question, scope, and non-identifiability</h2>
-      <p>The operational question is whether a fitted model can be transferred to a new population that has the same model inputs but no observed label. The toolkit compares observed drift statistics with source-vs-source sampling variability and aggregates the resulting signals. It does not perform one omnibus level-α test that the populations are identical, and it does not control a family-wise error rate over the final signal list.</p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Shift</th><th>Definition</th><th>What this toolkit can establish without new labels</th></tr></thead>
-          <tbody>
-            <tr><td>Covariate shift</td><td><em>P(x)</em> changes while <em>P(y|x)</em> is unchanged.</td><td>Feature, joint, support, score, attribution, and importance-weighting diagnostics can detect or estimate consequences under the unchanged-conditional assumption.</td></tr>
-            <tr><td>Label shift</td><td><em>P(y)</em> changes while <em>P(x|y)</em> is unchanged.</td><td>BBSE estimates the new class prior under that assumption.</td></tr>
-            <tr><td>Concept shift</td><td><em>P(y|x)</em> changes.</td><td>Not identifiable from unlabelled new rows. New labels are required.</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="callout caution"><strong>Measurement boundary.</strong> Every value presented for performance on the new population is an estimate under stated assumptions. A mild verdict is not measured target accuracy, and disagreement between estimators is evidence of inconclusiveness rather than permission to select the most favorable estimate.</p>
-      <p class="source">Sources: <a href="../README.md">README.md</a>; <a href="../docs/reference.md">docs/reference.md</a>.</p>
-    </section>
 
-    <section id="inputs">
-      <h2>2. Input contract and validation</h2>
-      <ul>
-        <li><strong>Files:</strong> CSV, Parquet (<code>.parquet</code> or <code>.pq</code>), and Feather are supported. Missing files and unsupported extensions fail immediately.</li>
-        <li><strong>Feature parity:</strong> every named feature must exist on both sides. Empty feature lists, duplicate feature names, declared categoricals outside the feature list, and a label included as a feature are rejected.</li>
-        <li><strong>Feature selection:</strong> <code>--features-file</code> reads one feature per non-comment line; <code>--features</code> accepts comma-separated names. Otherwise, shared columns are used after removing the label and <code>--exclude</code> columns. Identifiers, timestamps, post-label fields, and score-derived fields must be excluded by the operator.</li>
-        <li><strong>Categorical handling:</strong> explicitly declared columns, non-numeric columns, booleans, and numeric columns with at most 10 distinct source values are categorical. This avoids applying KS-type continuous tests under heavy ties. Values such as <code>1</code> and <code>1.0</code> are normalized to the same categorical level.</li>
-        <li><strong>Missing values:</strong> comma-separated <code>--missing-sentinels</code>, such as <code>-999</code>, are replaced with missing values before analysis. A feature entirely missing in either population and incompatible numeric/non-numeric dtypes produce warnings.</li>
-        <li><strong>Rows:</strong> operational decisions require at least 30 new rows. Paired mode enforces at least <code>n_new + 30</code> rows in each reference. Baseline construction requires at least 30 rows in both random partitions.</li>
-        <li><strong>Model and label:</strong> model tasks require a supported binary-classification or regression LightGBM model. Model files may be Booster <code>.txt</code>/<code>.model</code> or pickled/joblib estimators. Model feature names/count must match. Label-dependent tasks require the label on the source used by those tasks; binary labels must contain both 0 and 1. Regression switches the performance metrics to RMSE and MAE.</li>
-      </ul>
-      <p><strong>Fail-fast boundary:</strong> structural input, baseline compatibility, paired-size, model-loading, and configuration errors are raised before or at orchestration. Once task execution begins, a task-level exception is logged and recorded in <code>metadata["failed_tasks"]</code>; other tasks continue. Therefore, a completed run can still be incomplete and must be checked for failed tasks.</p>
-      <p class="source">Sources: <a href="../population_drift/analysis.py">analysis.py</a> (<code>load_table</code>, <code>validate_inputs</code>, <code>infer_feature_types</code>, <code>_validate_paired</code>, model validation); <a href="../tests/test_comparison.py">tests/test_comparison.py</a>.</p>
-    </section>
+<section id="summary">
+  <h2>1. Summary</h2>
+  <p>The toolkit compares a labelled reference population (the data the model was built and validated on) with a new, unlabelled population that has the same features. It measures differences in the feature distributions one column at a time, jointly, and in their support. It also measures differences in the model's outputs and attributions, and estimates performance on the new population under three different, explicitly stated assumptions. Each statistic is compared against a <strong>size-matched no-shift baseline</strong>: the same statistic computed on random splits of the reference, where no real shift exists. The results become a list of signals rated <code>mild</code>, <code>moderate</code>, or <code>severe</code>. A fixed, pre-specified rule turns that list into one verdict.</p>
+  <ul>
+    <li><strong>Severe</strong>: do not use the model as is. <strong>Moderate</strong>: use only with review. <strong>Mild</strong>: no evidence of a shift that the model is sensitive to; monitor.</li>
+    <li>What the run can see: covariate shift, P(x), and, under its assumption, label shift, P(y). What it cannot see: concept shift, P(y|x), and actual accuracy on the new population. Only labels from the new population can test those.</li>
+    <li>Status: implemented and unit-tested on the decision logic. Exercised on synthetic data only. No production population has been scored.</li>
+  </ul>
+</section>
 
-    <section id="workflows">
-      <h2>3. Single and paired workflows</h2>
-      <p>Single mode uses one labelled table as every task's reference. Paired mode prevents fit/evaluation conflation: fit-set tests characterize the training support, while model-output and performance tasks use a separate evaluation baseline. Each paired reference receives its own target-size-matched random-partition baseline.</p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Task key from <code>task_pair_map</code></th><th>Single mode</th><th>Paired mode</th></tr></thead>
-          <tbody>
-            <tr><td><code>continuous</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>equivalence</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>categorical</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>missingness</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>missingness_patterns</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>domain_classifier</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>mmd</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>energy</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>correlation</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>range_coverage</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>joint_outliers</code></td><td>labelled set vs new</td><td>fit set vs new</td></tr>
-            <tr><td><code>prediction_drift</code></td><td>labelled set vs new</td><td>evaluation set vs new</td></tr>
-            <tr><td><code>shap_drift</code></td><td>labelled set vs new</td><td>evaluation set vs new</td></tr>
-            <tr><td><code>calibration</code></td><td>labelled set</td><td>evaluation set</td></tr>
-            <tr><td><code>weighted_performance</code></td><td>labelled set vs new</td><td>evaluation set vs new</td></tr>
-            <tr><td><code>cbpe</code></td><td>labelled set vs new</td><td>evaluation set vs new</td></tr>
-            <tr><td><code>label_shift</code></td><td>labelled set vs new</td><td>evaluation set vs new</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>The weighting domain classifier is intentionally fit on evaluation versus new because its OOF odds reweight evaluation rows. In paired mode it is stored as <code>weight_domain</code>, separate from the fit-set <code>domain_classifier</code> used for population separability.</p>
-      <p class="source">Sources: <a href="../population_drift/analysis.py">analysis.py</a> (<code>FEATURE_TASKS</code>, <code>MODEL_TASKS</code>, <code>task_pair_map</code>, <code>_paired_analysis</code>); pair assignment tests in <a href="../tests/test_comparison.py">tests/test_comparison.py</a>.</p>
-    </section>
+<section id="question">
+  <h2>2. Question and identifiability</h2>
+  <p>The decision question is: <em>can the deployed model score the new population without retraining?</em> The new population has the model's input features but no outcome. That limits what can be established.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Shift type</th><th>Definition</th><th>Identifiable without new labels?</th><th>How the toolkit addresses it</th></tr></thead>
+    <tbody>
+      <tr><td>Covariate shift</td><td>P(x) changes, P(y|x) unchanged</td><td>Yes. It is a property of x alone.</td><td>Marginal, joint, support, score, and attribution tests detect it. Importance weighting estimates its effect on performance.</td></tr>
+      <tr><td>Label (prior) shift</td><td>P(y) changes, P(x|y) unchanged</td><td>Estimable under the stated assumption.</td><td>BBSE estimates the new prevalence (<a href="#bbse">12.4</a>).</td></tr>
+      <tr><td>Concept shift</td><td>P(y|x) changes</td><td>No. Two populations with identical P(x) can have different P(y|x).</td><td>Not addressed. Requires a labelled sample of the new population.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="callout caution"><strong>Measurement boundary.</strong> Every performance number for the new population is an <em>estimate under an assumption</em>, never a measurement. A <code>mild</code> verdict means "no evidence of covariate or prior shift that this model is sensitive to". It does not mean "discrimination and calibration carried over". The verdict is a decision rule applied to a list of signals. It is not a level-α hypothesis test that the populations are equal.</p>
+</section>
 
-    <section id="baseline">
-      <h2>4. Target-size-matched baseline</h2>
-      <p>For each round, the source is randomly permuted. The first <code>subset_size</code> rows act as pseudo-new data and the remaining rows act as the reference. <code>subset_size</code> should equal the new population size because PSI, KS D, and domain-classifier AUC depend on sample size. Baseline rounds compute point statistics but disable bootstrap and permutation inference.</p>
-      <p>The observed statistic exceeds baseline when it is strictly greater than the baseline 95th percentile. Its add-one empirical p-value is:</p>
-      <p class="callout"><code>(1 + number of baseline values ≥ observed) / (1 + number of rounds)</code></p>
-      <p>At the decision minimum of 30 rounds, resolution cannot be finer than <strong>1/31</strong>. Fewer than two rounds are rejected by the API; the documented decision setting is 30 or more. The baseline feature set must exactly match the comparison feature set. A supplied baseline emits a size warning when the new population is outside one-half to twice its subset size. In single mode, an undersized source causes an automatically built baseline to use a smaller subset and issue a warning; paired mode instead enforces exact target-size feasibility.</p>
-      <p><strong>Assumption:</strong> exchangeability within the reference. This null captures random-partition sampling noise, not drift already present over the reference window. A moving reference can widen the null and conceal additional change. Separate fit and evaluation references in paired mode produce separate baselines before their statistics are combined.</p>
-      <p class="source">Sources: <a href="../population_drift/analysis.py">analysis.py</a> (<code>build_baseline</code>, <code>compare_to_baseline</code>, <code>run_comparison</code>, <code>_paired_baseline</code>); baseline test in <a href="../tests/test_comparison.py">tests/test_comparison.py</a>.</p>
-    </section>
+<section id="principles">
+  <h2>3. Design principles and their rationale</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Principle</th><th>What it means in the code</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Pre-specify the decision</td><td>All cutoffs live in <code>Thresholds</code> and <code>DriftConfig</code>. They are written in full to each run's <code>metadata.json</code>.</td><td>If cutoffs are chosen after the new data has been seen, they get fitted to the result, which is the drift-analysis form of p-hacking. Freezing them and recording them makes a verdict auditable.</td></tr>
+      <tr><td>Compare to a size-matched no-shift baseline, not only to fixed cutoffs</td><td>Every comparable statistic is positioned within its distribution over random splits of the reference, each split sized to the new population (<a href="#baseline">§6</a>).</td><td>PSI, KS D, Wasserstein, and classifier AUC are biased upward at small <em>n</em>. Their natural variability also differs by feature (skew, ties, sparsity). One fixed cutoff cannot be right for all features and all sample sizes.</td></tr>
+      <tr><td>Three gates for a feature flag</td><td>A flagged feature must be <em>significant</em> after multiplicity adjustment, <em>beyond the baseline</em>, and of <em>practically relevant size</em> (<a href="#feature-severity">13.1</a>).</td><td>Each gate alone fails in a known way. Significance alone flags trivial differences at large <em>n</em>. Effect size alone ignores sampling noise at small <em>n</em>. Baseline position alone ignores practical relevance. Requiring all three controls false alarms while keeping every flag interpretable.</td></tr>
+      <tr><td>Weight by what the model uses</td><td>Features covering 80% of mean |TreeSHAP| are "model-important". Drift on other features is capped at <code>moderate</code>.</td><td>A large shift in a feature the model barely uses has little effect on its outputs. Escalating it would block transfers for irrelevant reasons.</td></tr>
+      <tr><td>Test the joint distribution, not only margins</td><td>Domain classifier, kernel tests, dependence structure, and Isolation Forest support checks.</td><td>Gradient-boosted trees model interactions. A shift that exists only in a combination of features is invisible to per-feature tests.</td></tr>
+      <tr><td>Keep the performance estimators separate</td><td>Importance weighting, CBPE, and BBSE are each reported with their own assumption. They are never averaged.</td><td>Their assumptions are mutually incompatible: covariate shift versus label shift. Averaging them would produce a number that is valid under no assumption.</td></tr>
+      <tr><td>Use separate data for fitting and for evaluation</td><td>Paired mode sends score, attribution, and performance tests to an evaluation set the model never trained on (<a href="#pairs">§5</a>).</td><td>Scores, SHAP values, and calibration on training rows are in-sample and optimistic.</td></tr>
+      <tr><td>Fail loudly on structure; degrade gracefully on tasks</td><td>Schema, size, configuration, and model-loading errors raise immediately. One failing analysis task is recorded in <code>failed_tasks</code> and the others continue.</td><td>A malformed input should never yield a plausible verdict. A single numerical failure, such as a singular matrix, should not discard all the other evidence. It is surfaced, not hidden.</td></tr>
+    </tbody>
+  </table></div>
+</section>
 
-    <section id="features">
-      <h2>5. Feature tests</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Family</th><th>Methods</th><th>Significance and baseline</th><th>Effect conventions</th></tr></thead>
-          <tbody>
-            <tr><td>Continuous</td><td>Two-sample KS, Anderson–Darling k-sample, Cramér–von Mises; SMD with analytic 95% CI; variance ratio; source-SD-normalized Wasserstein; 10-bin source-quantile PSI with 200-bootstrap CI.</td><td>KS or AD adjusted p &lt; 0.05; beyond baseline on KS D, PSI, or normalized Wasserstein.</td><td>Moderate: PSI ≥ 0.10, KS D ≥ 0.10, or |SMD| ≥ 0.10. Large: PSI ≥ 0.25, KS D ≥ 0.20, or |SMD| ≥ 0.50.</td></tr>
-            <tr><td>Equivalence</td><td>Unequal-variance two one-sided tests (TOST) for means with margin 0.10 pooled SD.</td><td>TOST evidence concerns mean equivalence only.</td><td>Does not establish equal variance or equal distribution shape.</td></tr>
-            <tr><td>Categorical</td><td>Chi-square homogeneity after merging levels with expected count below 5; Cramér's V; Jensen–Shannon distance, base 2; PSI; unseen-level share.</td><td>Chi-square adjusted p &lt; 0.05; beyond baseline on V, PSI, or JS.</td><td>Moderate: PSI ≥ 0.10, V ≥ 0.10, or unseen share &gt; 1%. Large: PSI ≥ 0.25 or V ≥ 0.30.</td></tr>
-            <tr><td>Missingness</td><td>Per-feature two-proportion z-test and Cohen's h; joint-pattern chi-square and Jensen–Shannon distance.</td><td>Adjusted z p &lt; 0.05 and Cohen's h beyond baseline.</td><td>Moderate: |h| ≥ 0.20. Large: |h| ≥ 0.50.</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>Benjamini–Hochberg correction is applied within each p-value family across features at α = 0.05. It is not applied across the final signal list. A feature's severity is the worse of distribution and missingness severity. Severe requires significance, a statistic beyond baseline, and a large effect; moderate requires significance, baseline exceedance, and a moderate effect.</p>
-      <p>Model importance is the smallest feature set whose reference-population mean absolute TreeSHAP contributions reach 80% of total importance. A low-importance feature may remain severe in the feature table, but its aggregate feature signal is capped at moderate. Without a model, all features are treated as important.</p>
-      <p class="source">Sources: <a href="../docs/reference.md">docs/reference.md</a>; <a href="../population_drift/analysis.py">analysis.py</a> (<code>assess_features</code>, <code>Thresholds</code>).</p>
-    </section>
+<section id="inputs">
+  <h2>4. Data contract and input validation</h2>
+  <h3>4.1 What the operator must guarantee</h3>
+  <ul>
+    <li>Both tables contain the model's input features, with identical definitions, units, encodings, and category codes. The toolkit cannot detect a silent change of definition, for example income reported gross versus net. It sees only that the distribution changed.</li>
+    <li>The feature list is exactly the model inputs. Identifiers, timestamps, row order, batch IDs, the label, and anything derived from the label or the score must be excluded. Otherwise the domain classifier separates the populations trivially, with AUC ≈ 1.</li>
+    <li>The new table is a representative draw of the population the model would score.</li>
+    <li>The model file is the deployed model. <code>--problem-type</code> and <code>--threshold</code> match production.</li>
+  </ul>
+  <h3>4.2 What the code validates</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Check</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>File format</td><td>CSV, Parquet (<code>.parquet</code>/<code>.pq</code>), Feather. Anything else, or a missing file, raises.</td></tr>
+      <tr><td>Missing-value sentinels</td><td><code>--missing-sentinels</code> values (for example <code>-999</code>) are replaced by NaN at load time in every table. If a sentinel is not declared, it is analysed as a real value, a common source of spurious drift.</td></tr>
+      <tr><td>Feature list</td><td>From <code>--features-file</code> (one name per line, <code>#</code> comments allowed) or <code>--features</code>. Otherwise all shared columns minus the label and <code>--exclude</code>. An empty list, duplicate names, missing columns (reported per side), a label inside the feature list, and declared categoricals not in the list all raise.</td></tr>
+      <tr><td>Type inference</td><td>Categorical if declared, non-numeric, boolean, or numeric with ≤ 10 distinct reference values (<code>discrete_max_unique</code>). Otherwise continuous. Numeric category codes are normalised so that <code>1</code> and <code>1.0</code> are the same level.</td></tr>
+      <tr><td>Schema differences</td><td>Incompatible dtypes (numeric on one side only) and features entirely missing on one side are logged as warnings and recorded in the <code>schema</code> table.</td></tr>
+      <tr><td>Row counts</td><td>Both tables must be non-empty. The new table needs ≥ 30 rows. This is enforced in paired mode, and in single mode whenever the toolkit builds the baseline itself, because a baseline subset must have 30 to <em>n</em> − 30 rows. Paired mode also requires each reference to have ≥ <em>n</em><sub>new</sub> + 30 rows. Single mode with an auto-built baseline shrinks the subset to ⌊<em>n</em><sub>ref</sub>/2⌋ when the reference is too small, and warns.</td></tr>
+      <tr><td>Model</td><td>LightGBM Booster (<code>.txt</code>/<code>.model</code>/<code>.lgb</code>) or a pickled/joblib estimator. Columns are aligned by the model's stored feature names. If the model has no names, columns are aligned positionally, and only when the counts match (with a warning). Object columns become pandas categoricals, which LightGBM remaps to its training categories. Only binary classification and regression are supported. Multiclass output raises.</td></tr>
+      <tr><td>Labels</td><td>Rows with a missing label are dropped from label-based tasks. Binary labels must be exactly {0, 1} with both present. In paired mode the label must exist in the evaluation set.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="source">Code: <code>load_table</code>, <code>validate_inputs</code>, <code>infer_feature_types</code>, <code>prepare_model_input</code>, <code>_labels_and_scores</code>, <code>_validate_paired</code>, <code>_require_reference_size</code>. Tests: missing-column, empty-population, undersized-reference, and label-as-feature errors in <code>tests/test_comparison.py</code>.</p>
+</section>
 
-    <section id="joint">
-      <h2>6. Joint distribution and support tests</h2>
-      <h3>Domain classifier</h3>
-      <p>A LightGBM population-membership classifier uses fixed hyperparameters: 200 trees, learning rate 0.05, 31 leaves, row and column subsampling 0.8, and L2 penalty 1. Its metric is stratified 5-fold out-of-fold (OOF) ROC AUC, so each row is scored only by a model that did not train on that row. The business label is never used. The classifier is refit after population-label shuffling for 20 permutations; the verdict uses this permutation p-value, while a stored Mann–Whitney p-value conditions on fixed scores. Rows are capped at <strong>200,000</strong>.</p>
-      <h3>Kernel, energy, dependence, and support</h3>
-      <ul>
-        <li><strong>MMD and energy distance:</strong> continuous values are source-median-imputed and source-standardized; categoricals are one-hot encoded for the top 10 source levels. MMD uses an unbiased squared RBF statistic with median-heuristic bandwidth. Both use permutation p-values and at most <strong>2,000</strong> rows per population. They can produce at most a moderate signal.</li>
-        <li><strong>Correlation:</strong> Spearman matrices are compared globally with a permutation test on the upper-triangle Frobenius norm. Per-pair changes use Fisher z with variance <code>1.06/(n−3)</code> and Benjamini–Hochberg correction. At most <strong>20,000</strong> rows are used.</li>
-        <li><strong>Range coverage:</strong> each continuous feature is checked against source 0.5%–99.5% quantiles and source min/max. A one-sided binomial test asks whether the expected tail share is exceeded.</li>
-        <li><strong>Joint support:</strong> Isolation Forest is fit on 70% of source rows. The 1% score quantile on the held-out 30% defines the out-of-support threshold, making the null share 1% by construction. A one-sided binomial test evaluates the target share. At most <strong>100,000</strong> rows are used.</li>
-      </ul>
-      <p class="source">Sources: <a href="../docs/reference.md">docs/reference.md</a>; implementations in <a href="../population_drift/analysis.py">analysis.py</a>.</p>
-    </section>
+<section id="pairs">
+  <h2>5. Reference assignment: single and paired mode</h2>
+  <p><strong>Single mode</strong> (no <code>--test</code>): every task compares the one labelled table (<code>--train</code>) with the new table. The toolkit does not split the labelled table. <strong>Paired mode</strong> (<code>--test</code>): <code>--train</code> is the fit set and <code>--test</code> is an evaluation set the model was scored on but not fitted on.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Tasks</th><th>Single mode</th><th>Paired mode</th><th>Why this pairing in paired mode</th></tr></thead>
+    <tbody>
+      <tr><td><code>continuous</code>, <code>equivalence</code>, <code>categorical</code>, <code>missingness</code>, <code>missingness_patterns</code>, <code>domain_classifier</code>, <code>mmd</code>, <code>energy</code>, <code>correlation</code>, <code>range_coverage</code>, <code>joint_outliers</code></td><td>labelled set vs new</td><td>fit set vs new</td><td>Support and range are defined by what the model was <em>trained</em> on. Trees are flat outside the training support, so the fit set is the relevant reference for "has the model seen inputs like these?".</td></tr>
+      <tr><td><code>prediction_drift</code>, <code>shap_drift</code>, <code>weighted_performance</code>, <code>cbpe</code>, <code>label_shift</code></td><td>labelled set vs new</td><td>evaluation set vs new</td><td>Scores, attributions, and performance on training rows are in-sample: overfitted, more confident, better ranked. Out-of-sample rows give an honest reference.</td></tr>
+      <tr><td><code>calibration</code></td><td>labelled set</td><td>evaluation set</td><td>Calibration measured on training rows is optimistic.</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li>In paired mode, the weighting classifier for importance weighting is refitted on evaluation versus new, because those weights reweight evaluation rows. It is stored as <code>weight_domain</code>, separate from the fit-set <code>domain_classifier</code> that measures separability.</li>
+    <li>Each reference has its own size-matched baseline. The fit-set baseline covers the feature tasks and the evaluation-set baseline covers the model tasks. They are concatenated for comparison.</li>
+    <li>In paired mode, the model-important feature set comes from TreeSHAP on the evaluation set.</li>
+    <li>Every signal in <code>decision.json</code> carries a <code>pair</code> field naming the populations it compared.</li>
+  </ul>
+  <p class="callout"><strong>Recommendation:</strong> use paired mode with a later, out-of-time labelled slice as the evaluation set. Single mode on the training data makes every model-centric number in-sample.</p>
+  <p class="source">Code: <code>task_pair_map</code>, <code>run_paired_comparison</code>, <code>_paired_baseline</code>, <code>_paired_analysis</code>, <code>_detach_weight_domain</code>. Tests: pair maps for both modes, and the fit/evaluation routing in <code>_paired_analysis</code>.</p>
+</section>
 
-    <section id="model">
-      <h2>7. Model-centric tests</h2>
-      <ul>
-        <li><strong>Score distribution:</strong> KS and source-bin PSI compare model scores. Baseline position gates score-severity interpretation.</li>
-        <li><strong>Operating impact:</strong> at <code>decision_threshold</code> (default 0.5), the predicted-positive rate is compared by two-proportion z-test and Cohen's h. The same comparison is reported for scores within ±0.05 of the cutoff; near-cutoff share is diagnostic and not a separate verdict signal.</li>
-        <li><strong>Attribution drift:</strong> LightGBM <code>pred_contrib</code> produces TreeSHAP values for at most <strong>5,000</strong> rows per population. Per-feature contribution distributions use KS with adjusted p-values, and mean-absolute-contribution rankings use Spearman correlation.</li>
-        <li><strong>Important set:</strong> features are ranked by reference mean absolute TreeSHAP. The smallest prefix reaching 80% cumulative importance is model-important. In paired mode, score and attribution tests use the evaluation set; fit-set contributions used elsewhere can be in-sample.</li>
-      </ul>
-      <p>A similar score histogram does not guarantee stable feature contributions or performance. Conversely, changed scores can reflect legitimate case-mix change rather than worse conditional performance.</p>
-      <p class="source">Sources: <a href="../population_drift/analysis.py">analysis.py</a>; <a href="../docs/reference.md">docs/reference.md</a>.</p>
-    </section>
+<section id="baseline">
+  <h2>6. The size-matched no-shift baseline</h2>
+  <h3>6.1 Procedure</h3>
+  <ol>
+    <li>For round <em>r</em> = 1…R (default R = 30), randomly permute the reference with seed <code>seed + r</code>. The first <em>n</em><sub>new</sub> rows play the new population and the remaining rows play the reference.</li>
+    <li>Run the full analysis on that pair, with bootstrap and permutation inference switched off (<code>for_baseline</code>). Only point statistics are needed.</li>
+    <li>Store every comparable statistic in long format. These are the <em>baseline values</em>: how large each statistic gets from sampling noise alone.</li>
+    <li>For the real comparison, compute the same statistic on reference versus new: the <em>observed value</em>.</li>
+  </ol>
+  <h3>6.2 Decision quantities</h3>
+  <ul>
+    <li><strong>Exceeds baseline</strong>: the observed value is <em>strictly greater</em> than the 95th percentile of the baseline values (<code>np.percentile</code>, linear interpolation).</li>
+    <li><strong>Empirical p-value</strong> = (1 + number of baseline rounds with a value ≥ the observed value) / (1 + number of rounds). The +1 counts the observed value as one more draw under the no-shift hypothesis, so p is never 0 (Phipson and Smyth 2010). With 30 rounds the minimum is 1/31 ≈ 0.032.</li>
+    <li>Every statistic compared with the baseline is oriented so that larger means more drift: |SMD|, |log variance ratio|, 1 − ρ, 1 − ESS ratio, degradation.</li>
+  </ul>
+  <p class="callout caution"><strong>Effective strictness at 30 rounds.</strong> With 30 baseline values, the interpolated 95th percentile lies between the 3rd- and 2nd-largest values. "Exceeds baseline" therefore means that at most 2 of the 30 baseline values are at least as large as the observed value, which is equivalent to an empirical p ≤ 3/31 ≈ 0.097. The baseline gate on its own is roughly a one-sided 10% gate. It is tightened by being combined with the significance and effect-size gates. For borderline decisions, increase <code>--n-rounds</code>.</p>
+  <h3>6.3 Why this design</h3>
+  <ul>
+    <li><strong>Why size-matched:</strong> PSI, KS D, Wasserstein, and out-of-fold AUC all shrink as sample size grows. A baseline built at a different size gives the wrong noise level. Size mismatch is therefore checked. A supplied baseline whose subset size is outside 0.5× to 2× of <em>n</em><sub>new</sub> produces a warning, and a baseline built on a different feature set is rejected.</li>
+    <li><strong>Why random splits of the reference:</strong> under exchangeability they are draws from exactly the no-shift hypothesis, with the reference's own skew, ties, sparsity, and missingness. No distributional assumption is needed.</li>
+    <li><strong>Why 30 rounds:</strong> each round reruns the full analysis, so cost grows linearly with rounds. Thirty is the smallest count that gives a usable 95th percentile and a p-value resolution of 1/31. It is a cost compromise, not an optimum.</li>
+    <li><strong>Why no inference in baseline rounds:</strong> only the statistic's distribution is needed. Bootstrap and permutation inside each round would multiply the cost without adding information.</li>
+  </ul>
+  <h3>6.4 Assumptions and caveats</h3>
+  <ul>
+    <li><strong>Exchangeability within the reference.</strong> Random splits ignore temporal order and clustering, such as multiple accounts per customer or branch effects. If the reference window itself drifted, the baseline widens and a further shift can look ordinary. Use a reference window over which the model is known to have performed acceptably.</li>
+    <li><strong>Conservative default when a baseline value is missing:</strong> if a statistic has no baseline values, the code treats it as beyond the baseline (<code>_beyond_baseline</code> returns True). Missing evidence cannot clear a flag.</li>
+    <li><strong>Not every baselined statistic is used as a gate.</strong> AD and CvM statistics, |SMD|, |log variance ratio|, unseen share, missingness-pattern JS, SHAP relative change, the rank-ρ deficit, ESS deficit, and performance degradation are baselined for reporting in <code>baseline_comparison.csv</code>. Which statistics gate which signals is listed in <a href="#signals">13.2</a>.</li>
+  </ul>
+  <p class="source">Code: <code>build_baseline</code>, <code>compare_to_baseline</code>, <code>_beyond_baseline</code>, <code>run_comparison</code>, <code>COMPARABLE_METRICS</code>. Tests: add-one p-value, a 95th-percentile exceedance, a metric with no baseline values, and the feature-set mismatch error.</p>
+</section>
 
-    <section id="performance">
-      <h2>8. Performance estimates without new labels</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Estimator</th><th>Computation</th><th>Assumption</th><th>Uncertainty and decision behavior</th></tr></thead>
-          <tbody>
-            <tr><td>Source calibration</td><td>Brier score, 10 equal-width-bin ECE, and logistic calibration slope/intercept on labelled reference rows.</td><td>The labelled evaluation set represents model calibration; results are optimistic if model-fit rows are reused.</td><td>Informational only. ECE &gt; 0.05 downgrades CBPE to <code>info</code>.</td></tr>
-            <tr><td>Importance weighting</td><td>OOF domain probabilities form <code>w = p/(1−p) × n_source/n_target</code>, clipped at the 0.99 quantile. Reports Kish ESS and weighted AUC/Brier/log loss or RMSE/MAE.</td><td>Covariate shift: <em>P(y|x)</em> unchanged; classifier odds estimate the density ratio and support overlaps.</td><td>Bootstrap 95% CI. ESS ratio &gt; 0.50 is mild, 0.10–0.50 moderate, and below 0.10 severe.</td></tr>
-            <tr><td>CBPE</td><td>Expected AUC from pairs of predicted probabilities, with ties worth 0.5. The same functional is reported for source scores beside realized source AUC.</td><td>Calibrated probabilities and unchanged mapping from features to labels.</td><td>Bootstrap 95% CI. ECE &gt; 0.05 makes the signal informational.</td></tr>
-            <tr><td>BBSE</td><td>Solves source confusion matrix <em>C</em>, new prediction rates μ, and <em>C</em><sup>−1</sup>μ, then renormalizes the estimated prior.</td><td>Label shift: <em>P(x|y)</em> unchanged. It is the wrong model under covariate shift.</td><td>Both populations are resampled. Moderate when the interval excludes source prevalence.</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>For importance weighting and CBPE, the default material tolerance is a 0.02 absolute AUC drop for binary classification or a 0.02 relative error increase for regression. A performance signal is severe only when the entire 95% CI is beyond tolerance. It is moderate when the point estimate is beyond tolerance, or when the CI crosses the boundary and degradation exceeds half the tolerance. A wide interval alone is reported as imprecision. If estimators disagree, do not quote one as target performance; obtain labels and investigate which assumptions fail.</p>
-      <p class="source">Sources: <a href="../docs/reference.md">docs/reference.md</a>; <a href="../population_drift/analysis.py">analysis.py</a> (<code>_performance_signal</code>); CI behavior tests in <a href="../tests/test_comparison.py">tests/test_comparison.py</a>.</p>
-    </section>
+<section id="multiplicity">
+  <h2>7. Multiple testing</h2>
+  <ul>
+    <li><strong>Within a test family:</strong> p-values are adjusted across features, or pairs, with Benjamini–Hochberg at α = 0.05 (<code>correction_method="fdr_bh"</code>; <code>holm</code> and <code>bonferroni</code> are also available). The families are KS, AD, CvM, χ², missingness z, Spearman pair z, range binomial, and SHAP-contribution KS, each adjusted separately.</li>
+    <li><strong>Why BH:</strong> this is a screening problem over many features, and controlling the false discovery rate keeps power where a family-wise correction would not. BH is valid under positive regression dependence (Benjamini and Yekutieli 2001), which is the typical case for correlated features. Benjamini–Yekutieli would be the conservative alternative under arbitrary dependence, but it is not implemented.</li>
+    <li><strong>Global tests:</strong> the two kernel tests (MMD and energy) use Bonferroni over the tests that ran (α/2). The domain classifier and the Isolation Forest are single tests.</li>
+    <li><strong>Across signals:</strong> there is no correction. The verdict rule tolerates up to two non-important <code>moderate</code> signals before escalating. This is a heuristic allowance for multiplicity, not formal error control. The family-wise false-alarm rate of the verdict has not been calibrated. The only evidence is the synthetic check in <a href="#validation">§18</a>.</li>
+  </ul>
+</section>
 
-    <section id="signals">
-      <h2>9. Signals and exact verdict aggregation</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Signal</th><th>Exact scoring rule</th><th>Counts?</th></tr></thead>
-          <tbody>
-            <tr><td>Feature drift: model-important features</td><td>Worst feature severity among important features; may be severe.</td><td>Yes</td></tr>
-            <tr><td>Feature drift: low-importance features</td><td>Moderate if any non-important feature is flagged; never severe.</td><td>Yes</td></tr>
-            <tr><td>Missing-value rates</td><td>Moderate for significant, beyond-baseline |h| ≥ 0.20; severe for |h| ≥ 0.50 on an important feature.</td><td>Yes</td></tr>
-            <tr><td>Unseen category levels</td><td>Moderate if any feature has unseen levels in more than 1% of new rows.</td><td>Yes</td></tr>
-            <tr><td>Domain classifier</td><td>Mild when within baseline or AUC ≤ 0.55; moderate when beyond baseline and AUC ≤ 0.80; severe above 0.80.</td><td>Yes</td></tr>
-            <tr><td>Kernel and energy</td><td>Moderate if either permutation p &lt; α/2 and its statistic exceeds baseline; never severe.</td><td>Yes</td></tr>
-            <tr><td>Dependence</td><td>Moderate for a significant, beyond-baseline global Frobenius change, or an important pair with |Δρ| &gt; 0.20 and adjusted p &lt; α.</td><td>Yes</td></tr>
-            <tr><td>Out-of-support rows</td><td>Mild if within baseline or share &lt; 2%; moderate from 2% through 5%; severe above 5%.</td><td>Yes</td></tr>
-            <tr><td>Values outside training range</td><td>Moderate if an important feature exceeds twice the expected tail share, adjusted p &lt; α, and baseline.</td><td>Yes</td></tr>
-            <tr><td>Model score distribution</td><td>Mild if within baseline or PSI &lt; 0.10; moderate if PSI ≤ 0.25; severe if PSI &gt; 0.25.</td><td>Yes</td></tr>
-            <tr><td>Predicted positive rate</td><td>Moderate when |Cohen's h| ≥ 0.20 and two-proportion p &lt; α.</td><td>Yes</td></tr>
-            <tr><td>SHAP attributions</td><td>Moderate if mean-|SHAP| rank correlation is below 0.80, or an important feature has contribution KS ≥ 0.10, adjusted p &lt; α, and exceeds baseline.</td><td>Yes</td></tr>
-            <tr><td>Effective sample size</td><td>Mild above 0.50; moderate from 0.10 through 0.50; severe below 0.10.</td><td>Yes</td></tr>
-            <tr><td>Importance-weighted performance / CBPE</td><td>Severe only when the whole 95% CI is beyond tolerance; moderate under the point/crossing rule described above. CBPE becomes <code>info</code> when source ECE &gt; 0.05.</td><td>Yes unless <code>info</code></td></tr>
-            <tr><td>Class prior (BBSE)</td><td>Moderate when its interval excludes source prevalence.</td><td>Yes</td></tr>
-            <tr><td>Source calibration</td><td>Always <code>info</code>.</td><td>No</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <h3>Aggregation</h3>
-      <ul>
-        <li><span class="tag">severe</span> — “Different: do not use the model as is” when any counted signal is severe.</li>
-        <li><span class="tag">mild</span> — “Similar: the model can be used (with monitoring)” only when there is no severe signal, at most two moderate signals, and no moderate signal marked <code>important=True</code>.</li>
-        <li><span class="tag">moderate</span> — “Use with caution: mitigation and verification needed” in every other case.</li>
-      </ul>
-      <p>Signals at level <code>info</code> are displayed but excluded from <code>n_severe</code>, <code>n_moderate</code>, and verdict aggregation.</p>
-      <p class="source">Sources: <a href="../population_drift/analysis.py">analysis.py</a> (<code>interpret_results</code>); aggregation tests in <a href="../tests/test_comparison.py">tests/test_comparison.py</a>.</p>
-    </section>
+<section id="marginal">
+  <h2>8. Marginal feature tests</h2>
+  <h3>8.1 Continuous features</h3>
+  <p>Missing values are excluded here and tested separately (<a href="#missingness">8.4</a>). A feature with fewer than 3 non-missing values on either side is reported as not tested.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Statistic</th><th>Exact implementation</th><th>Why chosen</th><th>Role and caveat</th></tr></thead>
+    <tbody>
+      <tr><td>Kolmogorov–Smirnov (KS)</td><td><code>scipy.stats.ks_2samp</code>, two-sided. D = max |ECDF<sub>ref</sub> − ECDF<sub>new</sub>| ∈ [0, 1].</td><td>Distribution-free and invariant to monotone transforms, as trees are. D doubles as an interpretable effect size.</td><td>Significance (BH-adjusted p), baseline gate, and effect gate (0.10 / 0.20). Least sensitive in the tails. Invalid under heavy ties, hence the ≤ 10-distinct-values rule.</td></tr>
+      <tr><td>Anderson–Darling (AD), k-sample</td><td><code>scipy.stats.anderson_ksamp</code>.</td><td>Weights the tails more heavily than KS. Tail shifts often matter most in risk models.</td><td>Significance: a feature is significant if <em>KS or AD</em> rejects after BH. SciPy caps the AD p-value to [0.001, 0.25].</td></tr>
+      <tr><td>Cramér–von Mises (CvM)</td><td><code>scipy.stats.cramervonmises_2samp</code>.</td><td>Integrates the squared ECDF gap over the whole distribution, so it is sensitive to diffuse shifts.</td><td>Reported and baselined only. It does not enter severity: KS and AD already cover the centre and the tails, and a third significance route would only add false alarms.</td></tr>
+      <tr><td>Standardised mean difference (SMD)</td><td>(mean<sub>new</sub> − mean<sub>ref</sub>) / √((s²<sub>ref</sub> + s²<sub>new</sub>)/2), with analytic 95% CI, SE = √((n₁+n₂)/(n₁n₂) + d²/(2(n₁+n₂))).</td><td>Scale-free location effect with established benchmarks: 0.10 negligible (Austin 2009), 0.50 medium (Cohen 1988).</td><td>Effect gate (0.10 / 0.50). Blind to changes in scale and shape.</td></tr>
+      <tr><td>Variance ratio</td><td>s²<sub>new</sub> / s²<sub>ref</sub>. |log ratio| is baselined.</td><td>Covers the scale changes that SMD cannot see.</td><td>Reported and baselined. Not a gate.</td></tr>
+      <tr><td>Wasserstein-1 / SD<sub>ref</sub></td><td><code>scipy.stats.wasserstein_distance</code> divided by the reference SD. Bootstrap 95% CI (200 resamples of both sides).</td><td>Transport distance in SD units. Reflects <em>how far</em> mass moved, not only <em>whether</em> it moved, which KS cannot.</td><td>Baseline gate only. There is no conventional cutoff.</td></tr>
+      <tr><td>Population Stability Index (PSI) — the Characteristic Stability Index (CSI) when applied per feature</td><td>Σ (q − p)·ln(q/p) over 10 bins with edges at reference deciles. Tied edges are collapsed, end bins are open-ended, empty bins are floored at 10⁻⁴ and renormalised. Bootstrap 95% CI.</td><td>The industry convention in credit risk (Siddiqi 2006). Validators and regulators expect it. It is a symmetrised Kullback–Leibler divergence on binned mass.</td><td>Baseline gate and effect gate (0.10 / 0.25). Depends on binning and is biased upward at small <em>n</em>, which is why it is never used alone.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Why several statistics joined by OR:</strong> a shift can be in location (SMD), shape (KS), tails (AD), transported mass (Wasserstein), or bin mass (PSI). Joining them by OR <em>within</em> each gate keeps the analysis sensitive to every shape of shift. Requiring all three gates (AND) keeps false alarms in check. The trade-off is that the OR makes each individual gate looser than any single statistic would be.</p>
 
-    <section id="configuration">
-      <h2>10. Configuration and reproducibility</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Setting</th><th>Default / requirement</th><th>Purpose</th></tr></thead>
-          <tbody>
-            <tr><td><code>seed</code></td><td>42</td><td>Controls permutations, resampling, and subsampling; record it.</td></tr>
-            <tr><td><code>n_rounds</code></td><td>30 for decisions</td><td>Baseline rounds; minimum empirical resolution 1/31.</td></tr>
-            <tr><td><code>n_classifier_permutations</code></td><td>20</td><td>Classifier-label permutation refits; minimum p-value 1/21.</td></tr>
-            <tr><td><code>n_bootstrap</code></td><td>200</td><td>Comparison-run intervals; set to 0 in baseline rounds.</td></tr>
-            <tr><td><code>n_permutations</code></td><td>100</td><td>Task permutation tests; set to 0 in baseline rounds.</td></tr>
-            <tr><td><code>max_classifier_rows</code></td><td>200,000</td><td>Domain classifier cap.</td></tr>
-            <tr><td><code>max_iforest_rows</code></td><td>100,000</td><td>Isolation Forest cap.</td></tr>
-            <tr><td><code>max_correlation_rows</code></td><td>20,000</td><td>Correlation cap.</td></tr>
-            <tr><td><code>max_shap_rows</code></td><td>5,000</td><td>TreeSHAP cap per population.</td></tr>
-            <tr><td><code>max_kernel_rows</code></td><td>2,000</td><td>MMD/energy cap per population.</td></tr>
-            <tr><td><code>alpha</code> / correction</td><td>0.05 / <code>fdr_bh</code></td><td>Within-family inference.</td></tr>
-            <tr><td><code>decision_threshold</code></td><td>0.5</td><td>Must be changed to the deployed cutoff.</td></tr>
-            <tr><td><code>performance_tolerance</code></td><td>0.02</td><td>Material absolute AUC drop or relative regression-error increase.</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>Reproduction requires the exact command, configuration, seed, input feature order, categorical declarations, missing sentinels, data versions, dependency environment, and code revision. The run metadata captures configuration, sizes, feature types, timestamps, failures, elapsed time, and core library versions. It does <strong>not</strong> currently capture a dataset hash or code commit hash. Compute and retain a checksum for every input and record <code>git rev-parse HEAD</code> beside the run before treating any result as reproducible.</p>
-      <p class="source">Sources: <a href="../population_drift/analysis.py">analysis.py</a> (<code>DriftConfig</code>, metadata construction); <a href="../docs/reference.md">docs/reference.md</a>.</p>
-    </section>
+  <h3>8.2 Mean equivalence (TOST)</h3>
+  <p>Two one-sided Welch t-tests (<code>statsmodels ttost_ind</code>, unequal variance) with margin ±0.10 pooled SD at α = 0.05. <code>equivalent=True</code> is positive evidence that the means are within 0.1 SD. <strong>Why:</strong> a non-significant difference test is absence of evidence, not evidence of similarity (Schuirmann 1987). TOST is the correct test for <em>claiming</em> similarity. <strong>Role:</strong> informational. It appears in <code>feature_assessment.csv</code> but does not lower severity, because equal means say nothing about variance, shape, or tails.</p>
 
-    <section id="api">
-      <h2>11. CLI and Python API</h2>
-      <h3>Single-reference comparison</h3>
-      <pre><code>python -m population_drift compare \
-  --train data/labeled.parquet \
-  --new data/new.parquet \
-  --features-file data/features.txt \
-  --categorical country,channel \
-  --label-col target \
-  --model data/model.txt \
-  --missing-sentinels -999 \
-  --threshold 0.5 \
-  --performance-tolerance 0.02 \
-  --n-rounds 30 \
-  --out runs/comparison \
-  --report runs/report.html</code></pre>
-      <h3>Paired comparison</h3>
-      <pre><code>python -m population_drift compare \
-  --train data/fit.parquet \
-  --test data/evaluation.parquet \
-  --new data/new.parquet \
-  --features-file data/features.txt \
-  --label-col target \
-  --model data/model.txt \
-  --n-rounds 30 \
-  --out runs/comparison \
-  --report runs/report.html</code></pre>
-      <h3>Report regeneration</h3>
-      <pre><code>python -m population_drift.report \
-  --comparison runs/comparison \
-  --out runs/report.html</code></pre>
-      <h3>Python API</h3>
-      <pre><code>import population_drift as pdrift
+  <h3>8.3 Categorical features</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Statistic</th><th>Exact implementation</th><th>Why chosen</th><th>Role and caveat</th></tr></thead>
+    <tbody>
+      <tr><td>χ² test of homogeneity</td><td>A 2 × k table without continuity correction. Levels whose expected count (based on the smaller row total) is below 5 are pooled into one column. If that pooled column is itself sparse, it is merged into the smallest remaining level.</td><td>The exact test of "same category proportions". The merging rule keeps the χ² approximation valid (Cochran's rule).</td><td>Significance (BH-adjusted). Merging can hide a shift among rare levels; the unseen-level share covers the most dangerous case.</td></tr>
+      <tr><td>Cramér's V</td><td>√(χ²/N). The table is 2 × k, so min(r−1, c−1) = 1.</td><td>An effect size that does not grow with <em>n</em>, unlike χ². Cohen's conventions apply directly.</td><td>Baseline and effect gates (0.10 / 0.30).</td></tr>
+      <tr><td>Jensen–Shannon distance</td><td><code>scipy.spatial.distance.jensenshannon</code>, base 2. This is the square root of the divergence, in [0, 1].</td><td>Symmetric, bounded, and finite with zero cells, unlike KL.</td><td>Baseline gate only.</td></tr>
+      <tr><td>PSI</td><td>The same formula, with categories as bins and a 10⁻⁴ floor.</td><td>Convention, comparable to continuous PSI.</td><td>Baseline and effect gates (0.10 / 0.25).</td></tr>
+      <tr><td>Unseen-level share</td><td>The share of new rows whose level never occurs in the reference.</td><td>LightGBM routes a level it never saw down a branch learned without any such rows, so those predictions have no empirical support.</td><td>Counts towards a <code>moderate</code> effect (&gt; 1%) and is also a separate signal (<a href="#signals">13.2</a>).</td></tr>
+    </tbody>
+  </table></div>
 
-config = pdrift.DriftConfig(
-    problem_type="binary",
-    decision_threshold=0.5,
-    seed=42,
+  <h3 id="missingness">8.4 Missingness</h3>
+  <ul>
+    <li><strong>Per feature:</strong> a two-proportion z-test on the missing rate (<code>statsmodels proportions_ztest</code>; p = 1 when both rates are 0 or 1), BH-adjusted, with Cohen's h = 2·asin√p<sub>new</sub> − 2·asin√p<sub>ref</sub> as the effect size.</li>
+    <li><strong>Joint pattern:</strong> each row's vector of missing indicators is a pattern. χ² and JS distance compare the pattern frequencies, and the 20 most frequent patterns are tabulated. This is informational and not a signal.</li>
+    <li><strong>Why separate from the value distribution:</strong> LightGBM learns a default direction for missing values at each split. A change in the missing rate changes how much mass follows that branch even when the observed values are stable. Changes in missingness are also the most common symptom of a pipeline or source-system change.</li>
+    <li><strong>Why Cohen's h rather than the raw difference:</strong> the arcsine transform stabilises variance. A move from 1% to 5% (h ≈ 0.25) is treated as more material than 40% to 44% (h ≈ 0.08), even though the raw difference is the same.</li>
+    <li><strong>Severity contribution:</strong> |h| ≥ 0.20, adjusted p &lt; α, and beyond the baseline gives <code>moderate</code>. |h| ≥ 0.50 gives <code>severe</code>. A feature's severity is the worse of its distribution level and its missingness level.</li>
+  </ul>
+</section>
+
+<section id="joint">
+  <h2>9. Joint-distribution tests</h2>
+  <h3>9.1 Domain classifier (classifier two-sample test)</h3>
+  <p><strong>Implementation.</strong> The target is population membership (reference = 0, new = 1), never the business label. Continuous features enter as numbers. Categoricals enter as native LightGBM categoricals over the union of levels. Missing values are handled natively. Each population is capped at 100,000 rows (<code>max_classifier_rows</code> = 200,000 in total). The model is a LightGBM classifier with fixed hyperparameters: 200 trees, learning rate 0.05, 31 leaves, <code>min_child_samples</code> 20, row and column subsampling 0.8, L2 penalty 1. Scores are out-of-fold from stratified, shuffled 5-fold cross-validation, and the metric is ROC AUC on those scores.</p>
+  <p><strong>Reported alongside the AUC:</strong> a 95% bootstrap CI (200 resamples of the out-of-fold scores within each population, without refitting); a one-sided Mann–Whitney p-value on the fixed out-of-fold scores; a permutation p-value from 20 refits with shuffled population labels, (1 + #null AUC ≥ observed)/21; and gain importance from one refit on all rows, showing which features drive the separation.</p>
+  <p><strong>Signal:</strong> <code>mild</code> if the AUC is within the baseline or ≤ 0.55, <code>moderate</code> if ≤ 0.80, <code>severe</code> above 0.80. The permutation and Mann–Whitney p-values are reported but <em>do not gate</em> the signal. The baseline does that job, matched to <em>n</em><sub>new</sub>.</p>
+  <ul>
+    <li><strong>Why a classifier:</strong> it detects any difference in the joint distribution that a flexible learner can exploit, including interactions and non-linear combinations (Friedman 2003; Lopez-Paz and Oquab 2017). Using the same model family as the deployed model means it "sees" the kind of structure the business model can use.</li>
+    <li><strong>Why AUC:</strong> it is threshold-free and independent of the group-size ratio. Under no shift its expected value is 0.5 whatever the sizes. It also equals the Mann–Whitney probability that a random new row scores above a random reference row (Hanley and McNeil 1982).</li>
+    <li><strong>Why out-of-fold:</strong> in-sample AUC rewards memorisation and is above 0.5 even with no shift. Out-of-fold scoring grades each row with a model that never trained on it.</li>
+    <li><strong>Why fixed hyperparameters:</strong> tuning to maximise AUC would report the maximum over configurations, which is biased upward, and would need nested CV to stay honest. Fixed, moderate settings make the AUC a measurement rather than the winner of a search.</li>
+    <li><strong>Why the permutation p-value does not gate:</strong> with 20 permutations its minimum is 1/21 ≈ 0.048, too coarse to gate at 0.05, and each permutation costs 5 refits. The size-matched baseline answers the more relevant question: is this AUC larger than random splits of the reference produce at this sample size?</li>
+    <li><strong>Why 0.55 and 0.80:</strong> these are conventions. 0.80 corresponds to "excellent discrimination" on the Hosmer–Lemeshow scale. Populations that are that separable overlap poorly, which also makes importance weighting unreliable.</li>
+    <li><strong>Caveats:</strong> a leaky column (ID, date) pushes the AUC to ≈ 1. Inspect the top gain drivers first. The AUC is a global measure: one materially shifted important feature can leave it near 0.55, which is why the per-feature tests are kept. Gain importance describes this classifier, not the business model, and is not causal.</li>
+  </ul>
+
+  <h3>9.2 Kernel tests: MMD and energy distance</h3>
+  <p><strong>Encoding</strong> (shared with the Isolation Forest): continuous features are imputed with the reference median and standardised with the reference mean and SD. Each categorical is one-hot encoded on its 10 most frequent reference levels, with missing as its own level. Rarer and unseen levels encode as all zeros. Each population is capped at 2,000 rows.</p>
+  <ul>
+    <li><strong>MMD²:</strong> unbiased (U-statistic, off-diagonal) squared maximum mean discrepancy with an RBF kernel. The bandwidth is the median pairwise distance over up to 1,000 pooled rows (the median heuristic). The p-value comes from 100 label permutations with the bandwidth held fixed (Gretton et al. 2012).</li>
+    <li><strong>Energy distance:</strong> 2·E|X−Y| − E|X−X′| − E|Y−Y′| on Euclidean distances, with a permutation p-value from 100 permutations (Székely and Rizzo 2013).</li>
+    <li><strong>Signal:</strong> <code>moderate</code> if either test has p &lt; α/2 (Bonferroni over the two tests) <em>and</em> its statistic exceeds the baseline. It can never be <code>severe</code>.</li>
+    <li><strong>Why include them:</strong> they are model-agnostic. With a characteristic kernel, MMD is consistent against every alternative, so it is an independent cross-check on the tree-based classifier.</li>
+    <li><strong>Why capped at moderate:</strong> the cost is O(n²) in memory, which forces the 2,000-row cap and therefore low power. The results also depend on encoding choices: standardisation, one-hot weighting, and median imputation (which hides changes in missingness). They corroborate; they do not decide.</li>
+  </ul>
+
+  <h3>9.3 Dependence structure</h3>
+  <ul>
+    <li><strong>Scope:</strong> continuous features only, up to 20,000 rows per population. Spearman correlations use pairwise-complete observations.</li>
+    <li><strong>Global:</strong> the Frobenius norm of the upper triangle of R<sub>new</sub> − R<sub>ref</sub>, with a permutation p-value from 100 shuffles of the pooled rows.</li>
+    <li><strong>Per pair:</strong> a Fisher z test on the two Spearman ρ values with variance 1.06/(n − 3) (Fieller, Hartley and Pearson 1957), BH-adjusted across pairs.</li>
+    <li><strong>Signal:</strong> <code>moderate</code> if the global norm exceeds the baseline <em>and</em> has permutation p &lt; α, <em>or</em> if a pair of two model-important features has |Δρ| &gt; 0.20 with adjusted p &lt; α. There is no baseline gate on the pair rule.</li>
+    <li><strong>Why Spearman:</strong> trees are invariant to monotone transforms, so rank dependence is the notion that matters to the model. It is also robust to outliers. <strong>Why both a global and a per-pair test:</strong> a global norm can hide one large change in a pair the model relies on, and one pair can be noise. Box's M was rejected because it assumes normality.</li>
+    <li><strong>Caveats:</strong> only pairwise monotone dependence is checked. Dependence involving categoricals and higher-order interactions is left to the domain classifier.</li>
+  </ul>
+</section>
+
+<section id="support">
+  <h2>10. Support tests (out-of-distribution)</h2>
+  <p>Tree ensembles do not extrapolate. Beyond the last split threshold, the prediction is constant. Rows outside the training support therefore receive confident-looking predictions with no empirical basis.</p>
+  <h3>10.1 Per-feature range coverage</h3>
+  <ul>
+    <li>For each continuous feature: the share of new values below the reference 0.5% quantile or above the 99.5% quantile. Under no shift the expected share is 1%. A one-sided binomial test (BH-adjusted) checks for an excess. The share beyond the reference minimum and maximum is also reported.</li>
+    <li><strong>Signal:</strong> <code>moderate</code> if a <em>model-important</em> feature has more than twice the expected share outside the range, adjusted p &lt; α, and a share beyond the baseline. Capped at <code>moderate</code>.</li>
+    <li><strong>Why quantiles, not min/max:</strong> one training outlier would otherwise define the support, and min/max are the least stable statistics of a sample.</li>
+  </ul>
+  <h3>10.2 Joint support: Isolation Forest</h3>
+  <ul>
+    <li>Up to 100,000 rows per population, using the encoding from 9.2. The reference rows are split 70/30. An <code>IsolationForest</code> with 200 trees is fitted on the 70%. The out-of-support threshold is the 1% quantile of <code>score_samples</code> on the held-out 30%. The share of new rows below the threshold is then compared with 1% by a one-sided binomial test.</li>
+    <li><strong>Signal:</strong> <code>mild</code> if within the baseline or below 2%, <code>moderate</code> up to 5%, <code>severe</code> above 5%. The binomial p-value is reported but does not gate.</li>
+    <li><strong>Why the held-out threshold:</strong> rows the forest was fitted on look less anomalous to it. Calibrating on unseen reference rows makes the expected share exactly 1% under exchangeability.</li>
+    <li><strong>Why Isolation Forest:</strong> a product of per-feature ranges still leaves holes, combinations never observed together. Isolation Forest finds such regions without estimating a density and scales linearly (Liu, Ting and Zhou 2008).</li>
+    <li><strong>Caveats:</strong> the results depend on the encoding, and median imputation makes missing values look typical. Missingness is covered by 8.4 instead.</li>
+  </ul>
+</section>
+
+<section id="model">
+  <h2>11. Model-centric tests</h2>
+  <p>These tests answer the question that matters for the decision: does the shift reach the model's output? A shift in a region where the model is flat is harmless. A small shift near the cutoff may not be.</p>
+  <h3>11.1 Score distribution</h3>
+  <ul>
+    <li>Scores are positive-class probabilities (binary) or predictions (regression). KS and PSI are computed on the scores, using reference-score deciles as bins.</li>
+    <li><strong>Signal:</strong> <code>mild</code> if neither score PSI nor score KS D exceeds the baseline, or if PSI &lt; 0.10. <code>moderate</code> if PSI ≤ 0.25, <code>severe</code> if PSI &gt; 0.25. This signal is <em>always flagged as model-important</em>, so a <code>moderate</code> score shift on its own prevents a <code>mild</code> verdict.</li>
+    <li><strong>Why:</strong> the score is what the business consumes. Score PSI is the standard credit-scorecard monitoring metric. A change in the model's own output is model-relevant by definition.</li>
+  </ul>
+  <h3>11.2 Operating point (binary only)</h3>
+  <ul>
+    <li>Predicted-positive rate at <code>decision_threshold</code> (score ≥ threshold): a two-proportion z-test and Cohen's h. <strong>Signal:</strong> <code>moderate</code> if |h| ≥ 0.20 and p &lt; α. There is no baseline gate and no importance flag. Capped at <code>moderate</code>.</li>
+    <li>The share of scores within ±0.05 of the threshold is compared with the same test. It is reported only.</li>
+    <li><strong>Why:</strong> approval and decline volumes, operational capacity, and loss budgets depend on the rate at the cutoff. When mass sits near the threshold, a small location shift can move that rate substantially with an unremarkable PSI. More borderline cases also mean more expected misclassifications.</li>
+  </ul>
+  <h3>11.3 Attribution drift (TreeSHAP)</h3>
+  <ul>
+    <li>Exact path-dependent TreeSHAP from LightGBM (<code>pred_contrib=True</code>; Lundberg et al. 2020) on up to 5,000 rows per population. For each feature: KS on the contribution distributions (BH-adjusted), mean |SHAP| in each population, and its relative change. Across features: Spearman ρ between the two mean-|SHAP| vectors (requires more than two features).</li>
+    <li><strong>Signal:</strong> <code>moderate</code> if ρ &lt; 0.80, or if a model-important feature has contribution KS ≥ 0.10, adjusted p &lt; α, and a value beyond the baseline. The ρ rule has no baseline gate. Capped at <code>moderate</code>.</li>
+    <li><strong>Why:</strong> it measures drift through the learned function. A similar score histogram can be produced by different reasons, and changed reasons are an early sign that the model is operating in a regime it was not validated for.</li>
+  </ul>
+  <h3 id="important">11.4 Model-important features</h3>
+  <ul>
+    <li>Features are ranked by mean |TreeSHAP| on the reference (the evaluation set in paired mode). The important set is the smallest prefix whose cumulative share reaches 80% (<code>important_feature_cumulative_share</code>). Features with zero attribution are never important.</li>
+    <li><strong>Why 80%:</strong> it is a Pareto-style convention that separates the features driving the output from the long tail. <strong>Why SHAP rather than split gain:</strong> SHAP attributions are consistent and measured in output units. Gain is biased towards high-cardinality features.</li>
+    <li>Without a model, every feature is treated as important. This is conservative: any moderate feature then prevents <code>mild</code>.</li>
+    <li><strong>Caveat:</strong> in single mode on training rows, the attributions are in-sample. Path-dependent TreeSHAP also reflects the training data's cover statistics.</li>
+  </ul>
+</section>
+
+<section id="performance">
+  <h2>12. Label-free performance estimation</h2>
+  <p>Each estimator answers "how would performance change?" under a different assumption. None measures performance on the new population.</p>
+  <h3>12.1 Reference calibration (binary, needs labels)</h3>
+  <p>Brier score. Expected calibration error (ECE) over 10 equal-width bins, weighted by bin share (Guo et al. 2017). Calibration slope and intercept from an effectively unpenalised logistic regression (C = 10⁶) of the label on logit(score) (Cox 1958). A reliability table on score deciles is used for the plot. <strong>Role:</strong> always <code>info</code>. If ECE &gt; 0.05, the CBPE signal is downgraded to <code>info</code>. <strong>Why:</strong> CBPE is valid only for calibrated probabilities, and calibration on the reference is the only part of that assumption that can be checked.</p>
+
+  <h3>12.2 Importance-weighted performance (needs labels and the domain classifier)</h3>
+  <ul>
+    <li><strong>Weights:</strong> the domain classifier's out-of-fold probability p for each reference row gives w = p/(1 − p) × n<sub>ref</sub>/n<sub>new</sub>, where the n's are the row counts the classifier used and p is clipped to [10⁻⁶, 1 − 10⁻⁶]. Weights are capped at their 99th percentile, and the number of clipped weights is reported.</li>
+    <li><strong>Overlap diagnostic:</strong> Kish effective sample size, ESS = (Σw)²/Σw² (Kish 1965), and the ESS ratio = ESS/n. <strong>Signal:</strong> <code>mild</code> above 0.50, <code>moderate</code> from 0.10 to 0.50, <code>severe</code> below 0.10. There is no baseline gate.</li>
+    <li><strong>Metrics:</strong> AUC, Brier, and log loss (binary) or RMSE and MAE (regression), weighted on the labelled reference rows the classifier used. The comparison value is the unweighted metric on the same rows. The CI is a percentile bootstrap (200 resamples of rows, keeping their weights). The signal uses AUC (binary) or RMSE (regression).</li>
+    <li><strong>Why it works:</strong> under covariate shift, E<sub>new</sub>[loss] = E<sub>ref</sub>[w(x)·loss] with w = p<sub>new</sub>(x)/p<sub>ref</sub>(x) (Shimodaira 2000; Sugiyama et al. 2007). By Bayes' rule, the classifier's odds times the size ratio estimate that density ratio. Out-of-fold probabilities keep the weights from being inflated by overfitting. Clipping trades a little bias for much lower variance.</li>
+    <li><strong>Caveats:</strong> the method requires P(y|x) to be unchanged and the populations to overlap. A low ESS means a few rows dominate. The bootstrap CI holds the weights fixed and so ignores uncertainty in the classifier: it is too narrow. In single mode on training rows, both the reference metric and the estimate are in-sample.</li>
+  </ul>
+
+  <h3>12.3 Confidence-based performance estimation (CBPE, binary only)</h3>
+  <ul>
+    <li><strong>Computation:</strong> expected ROC AUC if each label were Bernoulli(score), computed exactly over sorted unique scores (ratio of expectations, self-pairs removed, ties counted as 0.5). Expected accuracy, precision, and recall at the threshold are also reported.</li>
+    <li><strong>Like-for-like reference:</strong> degradation = CBPE(reference scores) − CBPE(new scores). The realised reference AUC and the gap between realised and estimated AUC (<code>source_calibration_gap</code>) are reported as a sanity check. <strong>Why:</strong> a calibration defect biases CBPE on both populations in the same way, so comparing like with like cancels it rather than mistaking it for a shift.</li>
+    <li><strong>CI:</strong> a bootstrap over new rows only (200 resamples). The reference CBPE is treated as fixed, so the interval ignores reference-side variability.</li>
+    <li><strong>Signal:</strong> rated on AUC with the tolerance rule in 12.5. It becomes <code>info</code> when reference ECE &gt; 0.05. CBPE also runs without labels, in which case no ECE check is possible and the signal is never downgraded.</li>
+    <li><strong>Caveats:</strong> it assumes calibration carries over and P(y|x) is unchanged. It cannot see regions where the model is confidently wrong. The concept is the one popularised by NannyML, re-implemented here without that dependency.</li>
+  </ul>
+
+  <h3 id="bbse">12.4 Black-box shift estimation (BBSE, binary, needs labels)</h3>
+  <ul>
+    <li>Hard predictions at <code>decision_threshold</code>. On the reference: C<sub>ij</sub> = P(ŷ = i, y = j). On the new population: μ<sub>i</sub> = P(ŷ = i). The class weights are w = C<sup>−1</sup>μ, and the new prior is q<sub>j</sub> ∝ w<sub>j</sub>·P<sub>ref</sub>(y = j), clipped at 0 and renormalised (Lipton, Wang and Smola 2018). The condition number of C is reported, since C is ill-conditioned when the model is near random or the threshold is extreme. The CI is a bootstrap resampling both populations (200).</li>
+    <li><strong>Signal:</strong> <code>moderate</code> if the 95% CI of the new prevalence excludes the reference prevalence. Capped at <code>moderate</code>.</li>
+    <li><strong>Why:</strong> in credit, default rates move with the economic cycle while borrower profiles given the outcome may be comparatively stable, which is the label-shift case. Under pure label shift, ranking (AUC) is preserved but calibration and threshold metrics are not, and the estimated prior is what would be used to recalibrate the intercept or the threshold.</li>
+    <li><strong>Caveats:</strong> under covariate shift this is the wrong model. There is no effect-size gate, so at large <em>n</em> a negligible prior change is flagged <code>moderate</code>. Always read the size of the estimated change.</li>
+  </ul>
+
+  <h3 id="tolerance">12.5 Performance signal rule</h3>
+  <p>The tolerance τ is <code>performance_tolerance</code>: 0.02 absolute AUC for binary models, or 0.02 × |reference RMSE| (relative) for regression. With bound = reference − τ when higher is better (reference + τ otherwise):</p>
+  <ul>
+    <li><code>severe</code>: the whole 95% CI is worse than the bound.</li>
+    <li><code>moderate</code>: the point estimate is worse than the bound, or the CI crosses the bound and the point degradation exceeds τ/2.</li>
+    <li><code>mild</code>: otherwise. A wide CI that merely crosses the bound is reported as imprecision, not as degradation.</li>
+  </ul>
+  <p>Tested cases, with reference AUC 0.80 and τ = 0.02: estimate 0.70 [0.68, 0.72] → <code>severe</code>; 0.77 [0.76, 0.79] → <code>moderate</code>; 0.795 [0.785, 0.805] → <code>mild</code>.</p>
+  <h3>12.6 When the estimators disagree</h3>
+  <p>Importance weighting assumes covariate shift. BBSE assumes label shift. CBPE assumes calibration and an unchanged P(y|x). Disagreement is evidence that at least one assumption fails. Report the estimates side by side and treat the question as inconclusive. Do not quote the most favourable one, and do not average them. The resolution is a labelled sample.</p>
+</section>
+
+<section id="verdict">
+  <h2>13. From statistics to verdict</h2>
+  <h3 id="feature-severity">13.1 Feature severity</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Type</th><th>Significant</th><th>Beyond baseline on (any)</th><th>Large effect (any) → severe</th><th>Moderate effect (any) → moderate</th></tr></thead>
+    <tbody>
+      <tr><td>Continuous</td><td>KS or AD adjusted p &lt; 0.05</td><td>KS D, PSI, Wasserstein/SD</td><td>PSI ≥ 0.25, KS D ≥ 0.20, |SMD| ≥ 0.50</td><td>PSI ≥ 0.10, KS D ≥ 0.10, |SMD| ≥ 0.10</td></tr>
+      <tr><td>Categorical</td><td>χ² adjusted p &lt; 0.05</td><td>Cramér's V, PSI, JS</td><td>PSI ≥ 0.25, V ≥ 0.30</td><td>PSI ≥ 0.10, V ≥ 0.10, unseen share &gt; 1%</td></tr>
+      <tr><td>Missingness (any type)</td><td>z adjusted p &lt; 0.05</td><td>|Cohen's h|</td><td>|h| ≥ 0.50</td><td>|h| ≥ 0.20</td></tr>
+    </tbody>
+  </table></div>
+  <p>A feature is <code>severe</code> only when significant, beyond the baseline, and large, all at once. It is <code>moderate</code> when significant, beyond the baseline, and moderate. Otherwise it is <code>mild</code>. Its final level is the worse of its distribution level and its missingness level. The results are written to <code>feature_assessment.csv</code>, with the reasons spelled out.</p>
+
+  <h3 id="signals">13.2 Signals</h3>
+  <p>"Important" here is the signal's <code>important</code> flag. A <code>moderate</code> signal with this flag prevents a <code>mild</code> verdict.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Signal</th><th>Rule</th><th>Baseline gate</th><th>Important flag</th><th>Max level</th></tr></thead>
+    <tbody>
+      <tr><td>Feature drift: model-important features</td><td>Worst severity among important features (13.1)</td><td>Yes, per feature</td><td>Always</td><td>severe</td></tr>
+      <tr><td>Feature drift: low-importance features (only with a model)</td><td><code>moderate</code> if any non-important feature is flagged</td><td>Yes, per feature</td><td>No</td><td>moderate</td></tr>
+      <tr><td>Missing-value rates</td><td>Flagged: |h| ≥ 0.20, adjusted p &lt; α, beyond baseline. <code>severe</code> if a flagged important feature has |h| ≥ 0.50</td><td>Yes</td><td>If a flagged feature is important</td><td>severe</td></tr>
+      <tr><td>Unseen category levels</td><td>Any categorical feature with unseen levels in more than 1% of new rows</td><td>No</td><td>No</td><td>moderate</td></tr>
+      <tr><td>Classifier two-sample test</td><td>Within baseline or AUC ≤ 0.55 → mild; ≤ 0.80 → moderate; &gt; 0.80 → severe</td><td>Yes</td><td>No</td><td>severe</td></tr>
+      <tr><td>Kernel / energy tests</td><td>Either test p &lt; α/2 and beyond baseline</td><td>Yes</td><td>No</td><td>moderate</td></tr>
+      <tr><td>Dependence (Spearman)</td><td>Global norm beyond baseline and p &lt; α; or an important–important pair with |Δρ| &gt; 0.20 and adjusted p &lt; α</td><td>Global only</td><td>No</td><td>moderate</td></tr>
+      <tr><td>Out-of-support rows</td><td>Within baseline or &lt; 2% → mild; ≤ 5% → moderate; &gt; 5% → severe</td><td>Yes</td><td>No</td><td>severe</td></tr>
+      <tr><td>Values outside training range</td><td>An important feature with &gt; 2× the expected share outside, adjusted p &lt; α, beyond baseline</td><td>Yes</td><td>If flagged</td><td>moderate</td></tr>
+      <tr><td>Model score distribution</td><td>Within baseline (PSI and KS) or PSI &lt; 0.10 → mild; ≤ 0.25 → moderate; &gt; 0.25 → severe</td><td>Yes</td><td>Always</td><td>severe</td></tr>
+      <tr><td>Predicted positive rate (binary)</td><td>|h| ≥ 0.20 and p &lt; α</td><td>No</td><td>No</td><td>moderate</td></tr>
+      <tr><td>Model attributions (SHAP)</td><td>Rank ρ &lt; 0.80; or an important feature with SHAP KS ≥ 0.10, adjusted p &lt; α, beyond baseline</td><td>Per-feature rule only</td><td>If a feature is flagged</td><td>moderate</td></tr>
+      <tr><td>Population overlap (ESS)</td><td>&gt; 0.50 mild; 0.10–0.50 moderate; &lt; 0.10 severe</td><td>No</td><td>No</td><td>severe</td></tr>
+      <tr><td>Estimated performance: importance weighting</td><td>Tolerance rule (12.5) on AUC or RMSE</td><td>No</td><td>No</td><td>severe</td></tr>
+      <tr><td>Estimated performance: CBPE (binary)</td><td>Tolerance rule on AUC. <code>info</code> if reference ECE &gt; 0.05</td><td>No</td><td>No</td><td>severe</td></tr>
+      <tr><td>Class prior (BBSE, binary)</td><td>CI excludes reference prevalence</td><td>No</td><td>No</td><td>moderate</td></tr>
+      <tr><td>Reference calibration</td><td>Always <code>info</code></td><td>—</td><td>—</td><td>info</td></tr>
+    </tbody>
+  </table></div>
+  <p>Computed but not used as signals: TOST equivalence, missingness patterns, CvM, variance ratio, near-threshold share, the AUC CI, the Mann–Whitney and permutation p-values, gain importance, CBPE accuracy, precision, and recall, and the weighted Brier, log loss, and MAE.</p>
+
+  <h3>13.3 Verdict</h3>
+  <ul>
+    <li><code>severe</code> — "Different: do not use the model as is" — if any counted signal is <code>severe</code>.</li>
+    <li><code>mild</code> — "Similar: the model can be used (with monitoring)" — if there is no <code>severe</code> signal, there are at most two <code>moderate</code> signals, and no <code>moderate</code> signal carries the important flag.</li>
+    <li><code>moderate</code> — "Use with caution: mitigation and verification needed" — otherwise.</li>
+    <li><code>info</code> signals are shown but excluded from the counts and the rule.</li>
+  </ul>
+  <p><strong>Why this rule:</strong> any severe signal is a sufficient reason not to deploy unchanged. A small number of moderate signals on features the model barely uses is expected even under no shift (see the synthetic check in <a href="#validation">§18</a>), so it should not block deployment. A moderate signal that touches what the model uses (important features or the score itself) does block it.</p>
+  <p><strong>Worked examples</strong> (from the unit tests):</p>
+  <ol>
+    <li>One feature with PSI 0.30, adjusted p 0.001, beyond baseline → the feature is <code>severe</code> → verdict <code>severe</code>.</li>
+    <li>The same PSI 0.30 but within the baseline, or with adjusted p 0.50 → the feature is <code>mild</code>.</li>
+    <li>Unseen levels in 2% of rows, plus a domain AUC of 0.70 beyond the baseline, neither flagged important → 2 moderate → verdict <code>mild</code>.</li>
+    <li>The same, plus a significant, beyond-baseline MMD → 3 moderate → verdict <code>moderate</code>.</li>
+    <li>Reference ECE 0.90 → the calibration signal is <code>info</code>, not counted → verdict unchanged.</li>
+  </ol>
+  <p class="callout caution"><strong>Signals are correlated.</strong> One underlying change can raise several signals. A missingness jump on an important feature shows up as both "feature drift" and "missing-value rates". A score shift typically comes with positive-rate and SHAP signals. The "at most two moderates" count treats them as independent. When reviewing a <code>moderate</code> verdict, group signals by their root cause.</p>
+  <p class="source">Code: <code>assess_features</code>, <code>interpret_results</code>, <code>_performance_signal</code>. Tests: <code>test_assess_features_*</code>, <code>test_interpret_results_*</code>, <code>test_performance_signal_*</code>.</p>
+</section>
+
+<section id="thresholds">
+  <h2>14. Thresholds and their provenance</h2>
+  <p>All cutoffs are conventions, not estimates from the user's data. The size-matched baseline is the data-specific reference. The cutoffs set the minimum effect worth acting on. They must be fixed before the new population is examined. They can be changed only through the Python API (<code>Thresholds</code>), not from the command line.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Field</th><th>Value</th><th>Provenance and rationale</th></tr></thead>
+    <tbody>
+      <tr><td><code>psi_moderate</code> / <code>psi_major</code></td><td>0.10 / 0.25</td><td>Credit-scorecard convention (Siddiqi 2006): &lt; 0.10 stable, 0.10–0.25 monitor, &gt; 0.25 significant shift.</td></tr>
+      <tr><td><code>ks_moderate</code> / <code>ks_major</code></td><td>0.10 / 0.20</td><td>Practitioner convention. No single authoritative source.</td></tr>
+      <tr><td><code>smd_small</code> / <code>smd_large</code></td><td>0.10 / 0.50</td><td>0.10 is the negligible-imbalance benchmark (Austin 2009). 0.50 is a medium effect (Cohen 1988).</td></tr>
+      <tr><td><code>cramers_v_moderate</code> / <code>cramers_v_major</code></td><td>0.10 / 0.30</td><td>Cohen's small and medium effect for df* = 1.</td></tr>
+      <tr><td><code>cohens_h_small</code> / <code>cohens_h_large</code></td><td>0.20 / 0.50</td><td>Cohen's small and medium effect for proportions.</td></tr>
+      <tr><td><code>unseen_level_share</code></td><td>1%</td><td>Convention: share of rows on unsupported categorical paths worth reviewing.</td></tr>
+      <tr><td><code>domain_auc_mild</code> / <code>domain_auc_strong</code></td><td>0.55 / 0.80</td><td>Convention. 0.80 is "excellent discrimination" (Hosmer and Lemeshow 2000).</td></tr>
+      <tr><td><code>ood_share_caution</code> / <code>ood_share_material</code></td><td>2% / 5%</td><td>2× and 5× the 1% expected by construction.</td></tr>
+      <tr><td><code>range_outside_ratio</code></td><td>2.0</td><td>2× the expected 1% tail share.</td></tr>
+      <tr><td><code>ess_ratio_good</code> / <code>ess_ratio_poor</code></td><td>0.50 / 0.10</td><td>Convention for Kish ESS. Below 10% the weighted estimate rests on very few rows.</td></tr>
+      <tr><td><code>correlation_pair_delta</code></td><td>0.20</td><td>Convention for a material change in rank correlation.</td></tr>
+      <tr><td><code>importance_rank_rho</code></td><td>0.80</td><td>Convention for a noticeably different importance ranking.</td></tr>
+      <tr><td><code>ece_max</code></td><td>0.05</td><td>Convention for acceptable calibration before relying on CBPE.</td></tr>
+      <tr><td><code>near_threshold_band</code></td><td>±0.05</td><td>Convention for "borderline" scores.</td></tr>
+      <tr><td><code>baseline_percentile</code></td><td>95</td><td>One-sided 5% exceedance. See the strictness note in 6.2.</td></tr>
+      <tr><td><code>important_feature_cumulative_share</code></td><td>0.80</td><td>Pareto-style convention for "features the model uses".</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="config">
+  <h2>15. Configuration</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th><code>DriftConfig</code> field</th><th>Default</th><th>CLI flag</th><th>Rationale / note</th></tr></thead>
+    <tbody>
+      <tr><td><code>alpha</code> / <code>correction_method</code></td><td>0.05 / <code>fdr_bh</code></td><td>—</td><td>Within-family FDR. <code>holm</code> and <code>bonferroni</code> are also allowed.</td></tr>
+      <tr><td><code>decision_threshold</code></td><td>0.5</td><td><code>--threshold</code></td><td>Must equal the production cutoff.</td></tr>
+      <tr><td><code>performance_tolerance</code></td><td>0.02</td><td><code>--performance-tolerance</code></td><td>Absolute AUC drop, or relative error increase. Prefer a value derived from business impact.</td></tr>
+      <tr><td><code>problem_type</code></td><td><code>binary</code></td><td><code>--problem-type</code></td><td><code>regression</code> disables calibration, CBPE, BBSE, and the positive rate.</td></tr>
+      <tr><td><code>seed</code></td><td>42</td><td><code>--seed</code></td><td>Seeds every random draw. Baseline round <em>r</em> uses <code>seed + r</code>; permutation <em>i</em> uses <code>seed + i</code>.</td></tr>
+      <tr><td><code>n_bootstrap</code></td><td>200</td><td><code>--n-bootstrap</code></td><td>Enough for stable 95% percentile intervals at acceptable cost.</td></tr>
+      <tr><td><code>n_permutations</code></td><td>100</td><td><code>--n-permutations</code></td><td>Kernel and correlation tests. Minimum p = 1/101.</td></tr>
+      <tr><td><code>n_classifier_permutations</code></td><td>20</td><td><code>--n-classifier-permutations</code></td><td>Each permutation costs 5 refits. Minimum p = 1/21, hence reported but not gating.</td></tr>
+      <tr><td>Baseline rounds</td><td>30</td><td><code>--n-rounds</code></td><td>Minimum p = 1/31. Raise it for borderline cases.</td></tr>
+      <tr><td><code>cv_folds</code></td><td>5</td><td>—</td><td>Out-of-fold scores for the domain classifier.</td></tr>
+      <tr><td><code>psi_bins</code></td><td>10</td><td>—</td><td>Deciles, the scorecard convention.</td></tr>
+      <tr><td><code>discrete_max_unique</code></td><td>10</td><td>—</td><td>Numeric columns at or below this are treated as categorical (ties).</td></tr>
+      <tr><td><code>min_expected_count</code></td><td>5</td><td>—</td><td>χ² sparse-level merging (Cochran).</td></tr>
+      <tr><td><code>equivalence_margin_smd</code></td><td>0.10</td><td>—</td><td>TOST margin in pooled SD.</td></tr>
+      <tr><td><code>range_quantiles</code> / <code>ood_quantile</code></td><td>(0.005, 0.995) / 0.01</td><td>—</td><td>Both define a 1% expected share under no shift.</td></tr>
+      <tr><td><code>weight_clip_quantile</code></td><td>0.99</td><td>—</td><td>Importance-weight cap.</td></tr>
+      <tr><td>Row caps</td><td>kernel 2,000; correlation 20,000; SHAP 5,000; Isolation Forest 100,000; classifier 200,000 total</td><td>—</td><td>Per population except the classifier (100,000 each). They bound compute; a shift visible only above a cap can be missed by that task.</td></tr>
+      <tr><td><code>n_jobs</code></td><td>−1</td><td><code>--n-jobs</code></td><td>Parallelism for LightGBM and the Isolation Forest.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The baseline subset size can be set for the standalone <code>baseline</code> command (<code>--subset-size</code>, or <code>--subset-fraction</code> with default 0.3). <code>compare</code> sizes it automatically.</p>
+</section>
+
+<section id="running">
+  <h2>16. Running the analysis</h2>
+  <h3>Paired mode (recommended)</h3>
+  <pre><code>python -m population_drift compare \
+  --train data/fit.parquet --test data/evaluation.parquet --new data/new.parquet \
+  --features-file data/features.txt --categorical country,channel \
+  --label-col target --model data/model.txt --missing-sentinels -999 \
+  --threshold 0.35 --performance-tolerance 0.02 --n-rounds 30 \
+  --out runs/comparison --report runs/report.html</code></pre>
+  <h3>Single mode</h3>
+  <pre><code>python -m population_drift compare \
+  --train data/labeled.parquet --new data/new.parquet \
+  --features-file data/features.txt --label-col target --model data/model.txt \
+  --n-rounds 30 --out runs/comparison --report runs/report.html</code></pre>
+  <p>A pre-built baseline can be passed with <code>--baseline</code> in single mode only. Regenerate a report with <code>python -m population_drift.report --comparison runs/comparison --out runs/report.html</code>.</p>
+  <h3>Python API</h3>
+  <pre><code>import population_drift as pdrift
+
+config = pdrift.DriftConfig(problem_type="binary", decision_threshold=0.35, seed=42)
+decision = pdrift.run_paired_comparison(
+    fit_set, evaluation, new, features, categorical, model, "target", config,
+    output_dir="runs/comparison", n_baseline_rounds=30,
 )
-baseline = pdrift.build_baseline(
-    train,
-    features,
-    categorical,
-    model,
-    "target",
-    n_rounds=30,
-    subset_size=len(new),
-    config=config,
-    output_dir="runs/baseline",
-)
-decision = pdrift.run_comparison(
-    train,
-    new,
-    features,
-    categorical,
-    model,
-    "target",
-    config,
-    baseline_dir="runs/baseline",
-    output_dir="runs/comparison",
-)
-paired = pdrift.run_paired_comparison(
-    fit_set,
-    evaluation,
-    new,
-    features,
-    categorical,
-    model,
-    "target",
-    config,
-    output_dir="runs/comparison",
-)</code></pre>
-      <p><code>run_comparison</code> applies one labelled reference to all tests. <code>run_paired_comparison</code> enforces the fit/evaluation assignment shown above. <code>build_baseline</code> creates the source-vs-source null. <code>DriftConfig</code> centralizes inference, cap, threshold, and reproducibility settings.</p>
-      <p class="source">Sources: <a href="../README.md">README.md</a>; signatures in <a href="../population_drift/analysis.py">analysis.py</a>; report CLI in <a href="../population_drift/report.py">report.py</a>.</p>
-    </section>
+decision["verdict_level"]   # "severe" | "moderate" | "mild"</code></pre>
+  <p><code>run_comparison</code> is the single-mode equivalent. <code>build_baseline</code> builds a standalone no-shift baseline, and <code>population_drift_analyzer</code> runs the tasks without a baseline or verdict. Custom thresholds: <code>DriftConfig(thresholds=pdrift.Thresholds(psi_major=0.20))</code>.</p>
+</section>
 
-    <section id="outputs">
-      <h2>12. Outputs, schemas, and failures</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Path</th><th>Contents</th></tr></thead>
-          <tbody>
-            <tr><td><code>baseline_statistics.csv</code></td><td>Long null statistics: <code>round</code>, <code>task</code>, <code>table</code>, <code>feature</code>, <code>metric</code>, <code>value</code>.</td></tr>
-            <tr><td><code>baseline_summary.csv</code></td><td>Grouped null summary: keys plus <code>n_rounds</code>, <code>mean</code>, <code>std</code>, <code>p50</code>, <code>p90</code>, <code>p95</code>, <code>p99</code>, <code>max</code>.</td></tr>
-            <tr><td><code>baseline_metadata.json</code></td><td>Baseline size, feature/type declarations, scope, model/label presence, configuration, and failed-task counts.</td></tr>
-            <tr><td><code>baseline_comparison.csv</code></td><td>Observed metrics with null count, median, 95th-percentile threshold, maximum, add-one empirical p-value, and <code>exceeds_baseline</code>.</td></tr>
-            <tr><td><code>tables/&lt;task&gt;__&lt;table&gt;.csv</code></td><td>Full task result tables. Global rows use <code>feature="__global__"</code>.</td></tr>
-            <tr><td><code>feature_assessment.csv</code></td><td>Per-feature type, severity, importance, statistics, significance, baseline position, equivalence, and reasons.</td></tr>
-            <tr><td><code>metadata.json</code></td><td>Creation time, row counts, feature list/types, label/model presence, problem type, full config, notes, <code>failed_tasks</code>, elapsed time, versions, and pair metadata.</td></tr>
-            <tr><td><code>decision.json</code></td><td><code>verdict</code>, <code>verdict_level</code>, rule, counted totals, signals with pairs, warnings, baseline path/size/rounds, reference mode, and <code>task_pairs</code>.</td></tr>
-            <tr><td><code>plot_data.json</code></td><td>Stored plotting inputs used by the generated report.</td></tr>
-            <tr><td>Generated HTML report</td><td>Standalone, embedded-style report generated by <code>population_drift.report</code> from a baseline or comparison directory.</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>Registered comparison metrics are oriented so larger values mean more drift, including absolute SMD, absolute log variance ratio, <code>1 − ρ</code>, <code>1 − ESS ratio</code>, and degradation. Warnings include baseline size mismatch, undersized automatic matching, model-presence mismatch, and failed tasks. A task failure is non-fatal after orchestration begins: inspect <code>metadata["failed_tasks"]</code> and the warning copied into <code>decision.json</code> before interpreting a verdict. Missing evidence must not be treated as evidence of stability.</p>
-      <p class="source">Sources: <a href="../docs/reference.md">docs/reference.md</a>; serialization and report loading in <a href="../population_drift/analysis.py">analysis.py</a> and <a href="../population_drift/report.py">report.py</a>.</p>
-    </section>
+<section id="outputs">
+  <h2>17. Outputs, audit trail, and reproducibility</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Path (under <code>--out</code>)</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td><code>decision.json</code></td><td><code>verdict</code>, <code>verdict_level</code>, <code>verdict_rule</code>, <code>n_severe</code>, <code>n_moderate</code>, <code>signals</code> (level, value, detail, important, pair), <code>warnings</code>, baseline path, rounds, and subset size, <code>reference_mode</code>, <code>task_pairs</code>.</td></tr>
+      <tr><td><code>feature_assessment.csv</code></td><td>Per feature: type, severity, importance and share, PSI, KS D, SMD, V, significance, baseline position, mean equivalence, and reasons.</td></tr>
+      <tr><td><code>baseline_comparison.csv</code></td><td>Each observed statistic with its baseline round count, median, 95th-percentile threshold, maximum, empirical p, and <code>exceeds_baseline</code>.</td></tr>
+      <tr><td><code>tables/&lt;task&gt;__&lt;table&gt;.csv</code></td><td>The full output of every task. Global rows use <code>feature="__global__"</code>.</td></tr>
+      <tr><td><code>metadata.json</code></td><td>Timestamp, row counts, features and types, label/model presence, full configuration including thresholds, task notes, <code>failed_tasks</code>, elapsed time, library versions, pair metadata.</td></tr>
+      <tr><td><code>plot_data.json</code></td><td>Inputs for the report figures.</td></tr>
+      <tr><td><code>baseline/</code></td><td><code>baseline_statistics.csv</code> (round × statistic), <code>baseline_summary.csv</code> (mean, sd, p50, p90, p95, p99, max), and <code>baseline_metadata.json</code> (subset size, rounds, configuration, failed-task counts).</td></tr>
+      <tr><td><code>--report</code> HTML</td><td>A standalone report with each section labelled by the pair it used.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Reproducibility</h3>
+  <ul>
+    <li><strong>Recorded automatically:</strong> seed, full configuration, row counts, feature types, failed tasks, and the versions of Python, numpy, pandas, scipy, scikit-learn, and LightGBM. Dependencies are pinned in <code>requirements.txt</code>.</li>
+    <li><strong>Not recorded, so record them manually with every archived run:</strong> a checksum of each input file (for example <code>shasum -a 256</code>), the code commit (<code>git rev-parse HEAD</code>), the model file checksum, and the exact command line.</li>
+    <li>LightGBM is not run with its <code>deterministic</code> option. If bit-identical reruns across machines or thread counts are required, verify by rerunning, and consider <code>--n-jobs 1</code>.</li>
+    <li><strong>Failed tasks:</strong> a task that raises is logged, recorded in <code>metadata["failed_tasks"]</code>, and copied into <code>decision.json</code> warnings. Its signal is then absent. Missing evidence is not evidence of stability, so check this list before accepting any verdict.</li>
+  </ul>
+</section>
 
-    <section id="limitations">
-      <h2>13. Interpretation and limitations</h2>
+<section id="validation">
+  <h2>18. Validation status</h2>
+  <ul>
+    <li><strong>Unit tests</strong> (<code>tests/test_comparison.py</code>, 18 tests, run with <code>.venv/bin/python -m pytest -q</code>) cover:
       <ul>
-        <li><strong>Severe</strong> authorizes rejection of unchanged deployment: do not use the model as is; label target data, investigate, and mitigate or retrain.</li>
-        <li><strong>Moderate</strong> authorizes only reviewed use: identify the driving signals, test operational impact, obtain labels where material, and define monitoring.</li>
-        <li><strong>Mild</strong> says the configured rule found no severe signal, no important moderate signal, and at most two other moderate signals. It does not measure target accuracy and does not establish absence of shift.</li>
-        <li><strong>Baseline limits:</strong> exchangeability may be false; a drifting source broadens the null; random partitions do not model temporal or clustered dependence; only 30 rounds give coarse p-value resolution.</li>
-        <li><strong>Power limits:</strong> row caps reduce compute but can miss subtle shifts that need more than 2,000 kernel rows, 5,000 SHAP rows, 20,000 correlation rows, 100,000 Isolation Forest rows, or 200,000 classifier rows.</li>
-        <li><strong>Assumption limits:</strong> importance weighting, CBPE, and BBSE rely on mutually different conditions. None can detect concept shift without target labels.</li>
-        <li><strong>Selection limits:</strong> thresholds are conventions, not learned guarantees. They should be set before inspecting the new population. Repeatedly tuning them to obtain a preferred verdict invalidates the interpretation.</li>
-        <li><strong>Operational limit:</strong> “with monitoring” means rerunning this comparison later; the repository does not schedule monitoring.</li>
-      </ul>
-      <p class="callout caution">When the decision matters, label a representative random sample from the new population. That is the direct way to test conditional performance and concept stability.</p>
-      <p class="source">Sources: <a href="../README.md">README.md</a>; <a href="../docs/reference.md">docs/reference.md</a>.</p>
-    </section>
+        <li>the pair maps for both modes;</li>
+        <li>input errors: empty populations, missing columns, undersized references, the label used as a feature, and a baseline feature-set mismatch;</li>
+        <li>the add-one empirical p-value and the 95th-percentile exceedance;</li>
+        <li>the no-baseline case;</li>
+        <li>the three-gate feature severity;</li>
+        <li>the verdict rule: severe, two versus three moderates, and <code>info</code> exclusion;</li>
+        <li>the performance-tolerance rule;</li>
+        <li>the fit/evaluation routing.</li>
+      </ul></li>
+    <li><strong>Not unit-tested:</strong> the numerical correctness of each statistic against independent implementations. Most statistics delegate to SciPy, statsmodels, scikit-learn, and LightGBM. The custom pieces are PSI, expected AUC, BBSE, the quadratic permutation tests, and the weighting.</li>
+    <li><strong>Synthetic no-shift check</strong> (reported in <code>docs/reference.md</code>): on 10 same-distribution pairs (2,500 vs 1,000 rows, 10-round baselines), no verdict was <code>severe</code> and 3 of 10 were <code>moderate</code>. This is indicative only. It used 10 rather than 30 rounds, and no committed script reproduces it. <code>examples/make_synthetic_data.py --no-shift --seed &lt;s&gt;</code> generates comparable pairs.</li>
+    <li><strong>Not yet done:</strong> a calibrated false-alarm rate under the operating configuration, power against known shift sizes, and any run on production data.</li>
+  </ul>
+</section>
 
-    <section id="references">
-      <h2>14. References and threshold conventions</h2>
-      <ol>
-        <li>Austin, P. C. (2009). “Using the standardized difference to compare the prevalence of a binary variable between two groups.” <em>Communications in Statistics — Simulation and Computation</em>. Source for the 0.10 standardized-difference benchmark.</li>
-        <li>Cohen, J. (1988). <em>Statistical Power Analysis for the Behavioral Sciences</em>. Effect-size conventions used for SMD and Cohen's h.</li>
-        <li>Friedman, J. (2003). “On multivariate goodness-of-fit and two-sample testing.” Basis for classifier two-sample testing.</li>
-        <li>Hanley, J. A., and McNeil, B. J. (1982). “The meaning and use of the area under a receiver operating characteristic curve.” <em>Radiology</em>. AUC/Mann–Whitney relationship.</li>
-        <li>Lopez-Paz, D., and Oquab, M. (2017). “Revisiting classifier two-sample tests.” <em>International Conference on Learning Representations</em>.</li>
-        <li>Siddiqi, N. (2006). <em>Credit Risk Scorecards</em>. PSI conventions 0.10 and 0.25.</li>
-      </ol>
-      <p>These cutoffs are conventions, not estimates from the current data. The source-vs-source baseline supplies the data-specific sampling reference.</p>
-    </section>
+<section id="limitations">
+  <h2>19. Limitations and known gaps</h2>
+  <h3>Identifiability</h3>
+  <ul>
+    <li>Concept shift and actual performance on the new population cannot be assessed without new labels.</li>
+    <li>The performance estimates rest on mutually incompatible assumptions. None of them can be verified on the new data.</li>
+  </ul>
+  <h3>Design</h3>
+  <ul>
+    <li>The baseline assumes exchangeability within the reference and ignores temporal and clustered dependence.</li>
+    <li>There is no error control across signals. Correlated signals are counted as independent.</li>
+    <li>The thresholds are conventions. Changing them after seeing results invalidates the verdict.</li>
+    <li>There is no segment-level analysis (product, channel, region, protected groups) and no time-series monitoring. "With monitoring" means a later rerun; the repository does not schedule one.</li>
+    <li>Selection effects are out of scope. If the labelled reference is a selected population, for example approved and booked accounts, while the new population is through-the-door applicants, the comparison mixes credit-policy effects with population shift.</li>
+  </ul>
+  <h3>Implementation</h3>
+  <ul>
+    <li>Importance-weighted CIs ignore uncertainty in the classifier. CBPE CIs ignore reference-side variability. Both are too narrow.</li>
+    <li>BBSE, the positive rate, the SHAP rank-ρ rule, the dependence pair rule, ESS, and unseen levels have no baseline gate. BBSE also has no effect-size gate.</li>
+    <li>Distance-based tasks (MMD, energy, Isolation Forest) impute medians and one-hot encode only the top 10 levels, so they are blind to missingness and to rare-level changes.</li>
+    <li>SciPy caps the AD p-value at 0.001 at the low end. Row caps limit the power of the kernel, correlation, SHAP, Isolation Forest, and classifier tasks on large populations.</li>
+    <li>In single mode, the auto-built baseline shrinks its subsets when the reference is smaller than 2 × <em>n</em><sub>new</sub>. It warns, but does not stop.</li>
+    <li>Thresholds are not exposed on the command line.</li>
+    <li>Dataset checksums and the code commit are not recorded automatically.</li>
+  </ul>
+</section>
 
-    <section id="source-audit">
-      <h2>Source audit and traceability</h2>
-      <p>This assessment was checked against <a href="../README.md">README.md</a>, <a href="../docs/reference.md">docs/reference.md</a>, <a href="../population_drift/analysis.py">population_drift/analysis.py</a>, <a href="../population_drift/report.py">population_drift/report.py</a>, and <a href="../tests/test_comparison.py">tests/test_comparison.py</a>. Implementation and tests control where prose could be ambiguous. No illustrative algorithm, dependency, or procedure outside the toolkit was added.</p>
-      <p>The audit identified two caveats worth retaining: single-mode automatic baselines can use a smaller-than-target subset with a warning when the source is too small, whereas paired mode strictly requires <code>n_new + 30</code>; and current metadata does not store a data checksum or git commit. Both are stated above rather than silently normalized away.</p>
-    </section>
+<section id="faq">
+  <h2>20. Frequently asked questions</h2>
+  <h3>Statistical design</h3>
+  <dl>
+    <dt>Why not simply apply PSI/CSI with the 0.10 / 0.25 rule?</dt>
+    <dd>PSI is biased upward at small <em>n</em>, depends on binning, and has a different natural spread for every feature. A fixed cutoff therefore over-flags small samples and skewed or sparse features, and under-flags large ones. The 0.10 / 0.25 values are kept as effect-size floors, but a flag also requires statistical significance and exceeding the size-matched no-shift baseline.</dd>
+    <dt>What exactly is the "no-shift baseline", and why random splits?</dt>
+    <dd>It is the distribution of each statistic over 30 random splits of the reference, each split sized like the new population. A random split of one population has no real shift by construction, so these values show how large each statistic gets from sampling noise alone, at the right sample size, without assuming any distribution.</dd>
+    <dt>Isn't requiring significance, baseline exceedance, and effect size all together too lenient?</dt>
+    <dd>It is designed to avoid flags that would not change a decision. Within each gate the statistics are joined by OR (any of KS, AD; any of KS D, PSI, Wasserstein; any of PSI, KS D, SMD), which keeps the analysis sensitive. Shifts that are real but small are still visible in <code>feature_assessment.csv</code>. They just do not escalate.</dd>
+    <dt>What is the false-alarm rate of the verdict?</dt>
+    <dd>It has not been calibrated. The verdict is a decision rule, not a level-α test. The one synthetic check (10 no-shift pairs) gave no <code>severe</code> and 3 <code>moderate</code> verdicts. Treat a single weak moderate as a review item.</dd>
+    <dt>Why are numeric columns with 10 or fewer distinct values treated as categorical?</dt>
+    <dd>KS-type tests assume continuous distributions. With heavy ties their p-values are invalid and D becomes hard to interpret. χ² and Cramér's V are the correct tools for discrete supports.</dd>
+    <dt>Why are KS and AD used for significance, but CvM is not?</dt>
+    <dd>KS is most sensitive near the centre and AD in the tails, so between them they cover the shift shapes that matter for risk models. Adding CvM as a third route would mostly add false alarms. It is reported for review.</dd>
+    <dt>Why doesn't a successful equivalence test (TOST) clear a feature?</dt>
+    <dd>TOST establishes that the <em>means</em> are within 0.1 SD. A feature can have equivalent means and a changed variance, tail, or shape, all of which matter to a tree model.</dd>
+    <dt>Why Spearman rather than Pearson for dependence?</dt>
+    <dd>Trees are invariant to monotone transforms, so rank dependence is what the model can exploit. Spearman is also robust to outliers and heavy tails, which are common in financial features.</dd>
+  </dl>
+  <h3>Machine-learning methodology</h3>
+  <dl>
+    <dt>Can the domain classifier leak or overfit?</dt>
+    <dd>It never sees the business label. Its scores are out-of-fold, so no row is scored by a model trained on it. Its hyperparameters are fixed, so its AUC is not the best result of a search. The real leakage risk is in the feature list: identifiers, dates, or score-derived columns separate the populations trivially. Check the top gain drivers first.</dd>
+    <dt>Why is the classifier's permutation p-value not used in the verdict?</dt>
+    <dd>Twenty permutations give a minimum p of 1/21 ≈ 0.048, too coarse to gate at 0.05, and each permutation is 5 refits. The size-matched baseline answers the more relevant question: is this AUC larger than random splits of the reference produce at this <em>n</em>? The permutation p-value is still reported.</dd>
+    <dt>Why does feature importance come from TreeSHAP on the reference?</dt>
+    <dd>Importance has to describe the deployed model as validated. On the new population, importance would itself be affected by the shift. In paired mode it uses the evaluation set, so it is out-of-sample.</dd>
+    <dt>How far can the importance-weighted performance estimate be trusted?</dt>
+    <dd>Only under covariate shift (P(y|x) unchanged) with adequate overlap. Read the ESS ratio first: below 0.10 the estimate rests on a handful of rows. Its CI holds the weights fixed and is therefore too narrow.</dd>
+    <dt>How does CBPE here relate to NannyML, and what if the model is miscalibrated?</dt>
+    <dd>It is the same idea, re-implemented. Degradation is computed like-for-like, CBPE on the reference versus CBPE on the new population, so a shared calibration bias cancels. If reference ECE exceeds 0.05, the CBPE signal is downgraded to <code>info</code>, because the assumption is visibly violated.</dd>
+    <dt>When should BBSE be believed?</dt>
+    <dd>When the change is plausibly in outcome prevalence alone. In credit, this is a cyclical shift in default rates with stable borrower profiles given the outcome. If the feature tests show covariate shift, BBSE's assumption is violated and its estimate should be disregarded.</dd>
+    <dt>What if the three performance estimates disagree?</dt>
+    <dd>Disagreement means at least one assumption fails. Report them side by side as inconclusive, then label a sample. Do not quote the best estimate or average them.</dd>
+  </dl>
+  <h3>Banking and governance</h3>
+  <dl>
+    <dt>Does this satisfy ongoing-monitoring requirements under model risk management (for example SR 11-7)?</dt>
+    <dd>It provides documented, pre-specified, reproducible evidence on population stability and expected model behaviour without outcomes, which is one component of ongoing monitoring. It does not replace outcome-based back-testing (discrimination, calibration, and default-rate accuracy on realised outcomes). Archive <code>decision.json</code>, <code>metadata.json</code>, data checksums, and the code commit with each run.</dd>
+    <dt>Is per-feature PSI the same as a Characteristic Stability Index (CSI)?</dt>
+    <dd>Yes. The per-feature PSI on reference deciles is a CSI. The score PSI is the classic scorecard stability index. Both are reported, with bootstrap CIs and baseline positions added.</dd>
+    <dt>Our labels exist only for approved accounts. Does that matter?</dt>
+    <dd>Yes. Selection (reject inference) is not modelled. Compare like with like: if the new file is through-the-door applicants, use a through-the-door reference for the feature tests. Note that label-based estimates (calibration, weighting, BBSE) then describe the approved population only.</dd>
+    <dt>How should macroeconomic or through-the-cycle effects be treated?</dt>
+    <dd>Choose a reference window that spans the conditions over which the model was validated. A downturn in the new period will typically appear as label shift (BBSE) and score drift. Whether that is acceptable is a policy decision, not a statistical one.</dd>
+    <dt>Can it check fairness or segment-level stability?</dt>
+    <dd>Not directly. Run the same comparison per segment (product, channel, region), each with its own baseline, and expect lower power at small <em>n</em>. Fair-lending and disparate-impact analysis is out of scope. Protected attributes should not be added as features unless they are model inputs.</dd>
+    <dt>What does each verdict authorise?</dt>
+    <dd><code>severe</code>: no unchanged deployment; investigate, label a sample, and adapt or retrain. <code>moderate</code>: deployment only after reviewing the driving signals, an operational impact check (for example of approval rates), and a labelling and monitoring plan. <code>mild</code>: deployment with a scheduled rerun. The model owner and validation function make the final decision. The toolkit supplies the evidence.</dd>
+    <dt>How large should the labelled sample be if the verdict is not mild?</dt>
+    <dd>The toolkit does not compute this. One rule: choose <em>n</em> so that the 95% CI half-width of the AUC is at most the tolerance, using the Hanley–McNeil standard error SE² = [A(1−A) + (n₁−1)(Q₁−A²) + (n₀−1)(Q₂−A²)] / (n₁n₀), with Q₁ = A/(2−A) and Q₂ = 2A²/(1+A). For low default rates, the number of defaults n₁ drives the requirement.</dd>
+  </dl>
+  <h3>Operational</h3>
+  <dl>
+    <dt>Can the thresholds be changed for our portfolio?</dt>
+    <dd>Yes, through the Python API (<code>Thresholds</code>, <code>DriftConfig</code>), before the new data is examined. They are recorded in <code>metadata.json</code>. Changing them after seeing results invalidates the decision.</dd>
+    <dt>What happens if part of the analysis fails?</dt>
+    <dd>Structural problems stop the run with a descriptive error. A failure in one analysis task is logged, recorded in <code>failed_tasks</code>, and shown in <code>decision.json</code> warnings, and the other tasks still run. A verdict with failed tasks is incomplete.</dd>
+    <dt>How long does a run take?</dt>
+    <dd>It has not been benchmarked. Cost grows with the baseline rounds (each reruns all tasks without inference), the classifier permutations (20 × 5 refits), and the bootstrap count. The row caps bound the quadratic and SHAP tasks.</dd>
+    <dt>Which reference should be used?</dt>
+    <dd>In paired mode, the model's fit set plus an out-of-time labelled evaluation slice the model never trained on, drawn from a period over which it performed acceptably. Single mode on training data is acceptable only for a first look.</dd>
+  </dl>
+</section>
+
+<section id="references">
+  <h2>21. References</h2>
+  <ol>
+    <li>Austin, P. C. (2009). Using the standardized difference to compare the prevalence of a binary variable between two groups in observational research. <em>Communications in Statistics — Simulation and Computation</em>, 38(6).</li>
+    <li>Benjamini, Y., and Hochberg, Y. (1995). Controlling the false discovery rate. <em>Journal of the Royal Statistical Society B</em>, 57(1).</li>
+    <li>Benjamini, Y., and Yekutieli, D. (2001). The control of the false discovery rate in multiple testing under dependency. <em>Annals of Statistics</em>, 29(4).</li>
+    <li>Board of Governors of the Federal Reserve System (2011). SR 11-7: Guidance on Model Risk Management.</li>
+    <li>Cohen, J. (1988). <em>Statistical Power Analysis for the Behavioral Sciences</em> (2nd ed.).</li>
+    <li>Cox, D. R. (1958). Two further applications of a model for binary regression. <em>Biometrika</em>, 45.</li>
+    <li>Fieller, E. C., Hartley, H. O., and Pearson, E. S. (1957). Tests for rank correlation coefficients. <em>Biometrika</em>, 44.</li>
+    <li>Friedman, J. (2003). On multivariate goodness-of-fit and two-sample testing. PHYSTAT 2003.</li>
+    <li>Gretton, A., Borgwardt, K., Rasch, M., Schölkopf, B., and Smola, A. (2012). A kernel two-sample test. <em>JMLR</em>, 13.</li>
+    <li>Guo, C., Pleiss, G., Sun, Y., and Weinberger, K. (2017). On calibration of modern neural networks. <em>ICML</em>.</li>
+    <li>Hanley, J. A., and McNeil, B. J. (1982). The meaning and use of the area under a receiver operating characteristic (ROC) curve. <em>Radiology</em>, 143.</li>
+    <li>Hosmer, D. W., and Lemeshow, S. (2000). <em>Applied Logistic Regression</em> (2nd ed.).</li>
+    <li>Kish, L. (1965). <em>Survey Sampling</em>.</li>
+    <li>Lipton, Z., Wang, Y.-X., and Smola, A. (2018). Detecting and correcting for label shift with black box predictors. <em>ICML</em>.</li>
+    <li>Liu, F. T., Ting, K. M., and Zhou, Z.-H. (2008). Isolation Forest. <em>ICDM</em>.</li>
+    <li>Lopez-Paz, D., and Oquab, M. (2017). Revisiting classifier two-sample tests. <em>ICLR</em>.</li>
+    <li>Lundberg, S. M., et al. (2020). From local explanations to global understanding with explainable AI for trees. <em>Nature Machine Intelligence</em>, 2.</li>
+    <li>Phipson, B., and Smyth, G. K. (2010). Permutation p-values should never be zero. <em>Statistical Applications in Genetics and Molecular Biology</em>, 9(1).</li>
+    <li>Schuirmann, D. J. (1987). A comparison of the two one-sided tests procedure and the power approach for assessing the equivalence of average bioavailability. <em>Journal of Pharmacokinetics and Biopharmaceutics</em>, 15.</li>
+    <li>Scholz, F. W., and Stephens, M. A. (1987). K-sample Anderson–Darling tests. <em>JASA</em>, 82.</li>
+    <li>Shimodaira, H. (2000). Improving predictive inference under covariate shift by weighting the log-likelihood function. <em>Journal of Statistical Planning and Inference</em>, 90.</li>
+    <li>Siddiqi, N. (2006). <em>Credit Risk Scorecards</em>. Wiley.</li>
+    <li>Sugiyama, M., Krauledat, M., and Müller, K.-R. (2007). Covariate shift adaptation by importance weighted cross validation. <em>JMLR</em>, 8.</li>
+    <li>Székely, G. J., and Rizzo, M. L. (2013). Energy statistics: a class of statistics based on distances. <em>Journal of Statistical Planning and Inference</em>, 143.</li>
+  </ol>
+</section>
+
   </main>
 </div>
-<footer>Standalone technical assessment · implementation-aligned documentation</footer>
+<footer>Standalone technical reference · aligned with <code>population_drift</code> at commit 0d7d0e9 · data and run outputs are not included</footer>
 </body>
 </html>
