@@ -16,8 +16,8 @@ With `--test`, `--train` is the fit set and `--test` is the evaluation set. Each
 
 | Tests | Pair |
 |---|---|
-| Continuous and categorical per-feature distributions, equivalence, missingness, domain classifier, maximum mean discrepancy (MMD), energy distance, correlations, range, isolation forest | Fit set vs new |
-| Score distribution, positive rate, TreeSHAP (Shapley additive explanations), importance weighting, confidence-based performance estimation (CBPE), black-box shift estimation (BBSE) | Evaluation set vs new |
+| Continuous and categorical per-feature distributions, equivalence, missingness, domain classifier, MMD, energy distance, correlations, range, isolation forest | Fit set vs new |
+| Score distribution, positive rate, TreeSHAP, importance weighting, CBPE, BBSE | Evaluation set vs new |
 | Calibration | Evaluation set |
 
 The weighting classifier is fit on the evaluation set versus the new population, because those weights reweight evaluation rows. It is stored separately from the fit-set domain classifier. Levels are `severe`, `moderate`, and `mild`. A reference shorter than `n_new + 30` raises before the analysis starts. Each reference has its own size-matched baseline for the tests that use it.
@@ -40,15 +40,15 @@ A feature is severe only when three conditions hold: the test is significant aft
 
 | Type | Significant | Beyond baseline on | Large | Moderate |
 |---|---|---|---|---|
-| Continuous | Kolmogorov–Smirnov (KS) or Anderson–Darling (AD) adjusted p < α | Kolmogorov–Smirnov statistic (KS D), Population Stability Index (PSI), Wasserstein distance / standard deviation (SD) | Population Stability Index (PSI) ≥ 0.25 or Kolmogorov–Smirnov statistic (KS D) ≥ 0.20 or \|standardized mean difference (SMD)\| ≥ 0.50 | Population Stability Index (PSI) ≥ 0.10 or Kolmogorov–Smirnov statistic (KS D) ≥ 0.10 or \|standardized mean difference (SMD)\| ≥ 0.10 |
-| Categorical | chi-square adjusted p < α | Cramér’s V, Population Stability Index (PSI), Jensen–Shannon (JS) | Population Stability Index (PSI) ≥ 0.25 or V ≥ 0.30 | Population Stability Index (PSI) ≥ 0.10 or V ≥ 0.10 or unseen-level share > 1% |
+| Continuous | KS or AD adjusted p < α | KS D, PSI, Wasserstein/SD | PSI ≥ 0.25 or KS D ≥ 0.20 or \|SMD\| ≥ 0.50 | PSI ≥ 0.10 or KS D ≥ 0.10 or \|SMD\| ≥ 0.10 |
+| Categorical | chi-square adjusted p < α | Cramér’s V, PSI, JS | PSI ≥ 0.25 or V ≥ 0.30 | PSI ≥ 0.10 or V ≥ 0.10 or unseen-level share > 1% |
 | Missingness | two-proportion z adjusted p < α | Cohen’s h | \|h\| ≥ 0.50 | \|h\| ≥ 0.20 |
 
-The effect-size cutoffs are conventions: Population Stability Index (PSI) 0.10 / 0.25 (Siddiqi 2006), standardized mean difference (SMD) and Cohen’s h (Cohen 1988; Austin 2009 for the 0.10 mean-difference benchmark), Cramér’s V 0.10 / 0.30. They are not estimated from the user’s data. Change them in `Thresholds` before looking at the new population, not after.
+The effect-size cutoffs are conventions: PSI 0.10 / 0.25 (Siddiqi 2006), SMD and Cohen’s h (Cohen 1988; Austin 2009 for the 0.10 mean-difference benchmark), Cramér’s V 0.10 / 0.30. They are not estimated from the user’s data. Change them in `Thresholds` before looking at the new population, not after.
 
 Low-importance features are capped at moderate in the signal list, so a large shift in a feature the model barely uses cannot by itself force a severe verdict. The feature table still shows that feature’s own severity.
 
-Model-important features are the smallest set whose mean absolute TreeSHAP (Shapley additive explanations) on the reference used in that comparison reaches 80% of the total (`important_feature_cumulative_share`). On the fit set those contributions are in-sample.
+Model-important features are the smallest set whose mean absolute TreeSHAP on the reference used in that comparison reaches 80% of the total (`important_feature_cumulative_share`). On the fit set those contributions are in-sample.
 
 ## Signals
 
@@ -60,18 +60,18 @@ Model-important features are the smallest set whose mean absolute TreeSHAP (Shap
 | Feature drift, other features | Moderate if any non-important feature is flagged. Never severe. |
 | Missing-value rates | Moderate if any \|h\| ≥ 0.2, significant, and beyond baseline. Severe if \|h\| ≥ 0.5 on an important feature. |
 | Unseen category levels | Moderate if any feature has an unseen level in more than 1% of new rows. |
-| Domain classifier model | Mild if within baseline or area under the curve (AUC) ≤ 0.55. Moderate if area under the curve (AUC) ≤ 0.80. Severe if area under the curve (AUC) > 0.80. |
+| Domain classifier model | Mild if within baseline or AUC ≤ 0.55. Moderate if AUC ≤ 0.80. Severe if AUC > 0.80. |
 | Kernel and energy tests | Moderate if either test has permutation p < α/2 and exceeds its baseline. Cannot be severe. |
 | Dependence | Moderate if the Spearman Frobenius norm is significant and beyond baseline, or an important pair has \|Δρ\| > 0.20 with adjusted p < α. |
 | Out-of-support rows | Mild if within baseline or share < 2%. Moderate up to 5%. Severe above 5%. |
 | Values outside the training range | Moderate if an important feature has more than twice the expected share outside the training 0.5%–99.5% quantiles, adjusted p < α, and beyond baseline. |
-| Score distribution | Mild if within baseline or Population Stability Index (PSI) < 0.10. Moderate if Population Stability Index (PSI) ≤ 0.25. Severe if Population Stability Index (PSI) > 0.25. |
+| Score distribution | Mild if within baseline or PSI < 0.10. Moderate if PSI ≤ 0.25. Severe if PSI > 0.25. |
 | Predicted positive rate | Moderate if \|Cohen’s h\| ≥ 0.20 and the two-proportion p-value < α, at `decision_threshold`. |
-| Shapley additive explanations (SHAP) attributions | Moderate if the rank correlation of mean \|Shapley additive explanations (SHAP)\| is below 0.80, or an important feature has contribution Kolmogorov–Smirnov (KS) ≥ 0.10, adjusted p < α, and beyond baseline. |
-| Effective sample size | Mild if the Kish effective sample size (ESS) ratio > 0.50. Moderate from 0.10 to 0.50. Severe below 0.10. |
-| Importance-weighted performance and confidence-based performance estimation (CBPE) | Severe only if the whole 95% confidence interval (CI) is beyond `performance_tolerance` (default 0.02 absolute area under the curve (AUC), or relative error for regression). Moderate if the point estimate is beyond tolerance, or the interval crosses it and the degradation exceeds half the tolerance. Confidence-based performance estimation (CBPE) is downgraded to `info` when source expected calibration error (ECE) > 0.05. |
+| SHAP attributions | Moderate if the rank correlation of mean \|SHAP\| is below 0.80, or an important feature has contribution KS ≥ 0.10, adjusted p < α, and beyond baseline. |
+| ESS | Mild if the Kish ESS ratio > 0.50. Moderate from 0.10 to 0.50. Severe below 0.10. |
+| Importance-weighted performance and CBPE | Severe only if the whole 95% CI is beyond `performance_tolerance` (default 0.02 absolute AUC, or relative error for regression). Moderate if the point estimate is beyond tolerance, or the interval crosses it and the degradation exceeds half the tolerance. CBPE is downgraded to `info` when source ECE > 0.05. |
 | Class prior (BBSE) | Moderate if the interval excludes the training prevalence. Valid only if P(x\|y) is unchanged. |
-| Source calibration | `info`. expected calibration error (ECE) and calibration slope on the labelled training file. |
+| Source calibration | `info`. ECE and calibration slope on the labelled training file. |
 
 Verdict:
 
@@ -87,21 +87,21 @@ One function per question. A failing task is logged in `metadata["failed_tasks"]
 
 | Question | Procedure | Why this procedure |
 |---|---|---|
-| Did a continuous per-feature distribution change? | Two-sample Kolmogorov–Smirnov (KS), Anderson–Darling (AD) k-sample, Cramér–von Mises (CvM). Benjamini–Hochberg (BH) on each p-value family. | The three tests weight the distribution differently. Kolmogorov–Smirnov statistic (KS D) is also the effect size in the severity rule. |
-| Did the mean change by a practical amount, and are the means equivalent? | Standardized mean difference (SMD), pooled standard deviation (SD) with an analytic 95% confidence interval (CI). Two one-sided tests (TOST), unequal variance, margin 0.10 pooled standard deviation (SD). | Standardized mean difference (SMD) is the scale used in the severity rule. Two one-sided tests (TOST) are evidence for similar means. It says nothing about variance or shape. |
-| Did scale or bin masses change? | Variance ratio, Wasserstein distance divided by the source standard deviation (SD), Population Stability Index (PSI) on source-quantile bins (10 bins). Bootstrap intervals on the comparison run (200 resamples). | Population Stability Index (PSI) is the conventional stability summary. It is not used as a p-value. |
-| Did a categorical per-feature distribution change? | Chi-square after merging levels with expected count below 5. Cramér’s V, Jensen–Shannon (JS) (base 2), Population Stability Index (PSI). Labels `1` and `1.0` are treated as the same level. | Chi-square is the test of a shared discrete distribution. V does not grow with sample size. |
+| Did a continuous per-feature distribution change? | Two-sample KS, AD k-sample, CvM. BH on each p-value family. | The three tests weight the distribution differently. KS D is also the effect size in the severity rule. |
+| Did the mean change by a practical amount, and are the means equivalent? | SMD, pooled SD with an analytic 95% CI. TOST, unequal variance, margin 0.10 pooled SD. | SMD is the scale used in the severity rule. TOST is evidence for similar means. It says nothing about variance or shape. |
+| Did scale or bin masses change? | Variance ratio, Wasserstein distance divided by the source SD, PSI on source-quantile bins (10 bins). Bootstrap intervals on the comparison run (200 resamples). | PSI is the conventional stability summary. It is not used as a p-value. |
+| Did a categorical per-feature distribution change? | Chi-square after merging levels with expected count below 5. Cramér’s V, JS (base 2), PSI. Labels `1` and `1.0` are treated as the same level. | Chi-square is the test of a shared discrete distribution. V does not grow with sample size. |
 | Will the model see an untrained level? | Share of new rows whose level is absent from training. | LightGBM sends an unseen level down a default path. |
-| Did missingness change? | Two-proportion z-test and Cohen’s h per feature. Separately, chi-square and Jensen–Shannon (JS) on the joint missingness pattern. | Observed values can match while the missing rate changes, and LightGBM’s missing branch then applies to a different fraction of rows. |
-| Can any function of the features tell the populations apart? | Domain classifier model: LightGBM, 200 trees, learning rate 0.05, 31 leaves, row and column subsampling 0.8, L2 penalty 1. Label is population membership, never the business target. Metric is stratified 5-fold out-of-fold (OOF) receiver operating characteristic (ROC) area under the curve (AUC). | Per-feature tests miss a shift that exists only as a combination. The area under the curve (AUC) does not depend on a cutoff and stays 0.5 when the score distributions match, which matters because the group sizes differ. Out-of-fold scoring stops the trees being graded on rows they just fitted. Hyperparameters are fixed, so the area under the curve (AUC) is not the winner of a model search (Friedman 2003; Lopez-Paz and Oquab 2017). |
-| Could that area under the curve (AUC) arise under no shift? | Two nulls. Shuffle the population label and refit the cross-validation (`n_classifier_permutations`, default 20). And the training-split baseline above. A Mann–Whitney test on the held-out scores is stored; for fixed scores it is the same comparison as area under the curve (AUC) (Hanley and McNeil 1982) but it treats the scores as given, so the verdict uses the permutation p-value. | The permutation null breaks only the population label. The baseline asks whether the same area under the curve (AUC) appears when both groups are random pieces of the training population. |
-| Which inputs drive that separation? | Gain (total loss reduction) from one fit on all rows, as a share of total gain. | Descriptive of that fit. Not the business model’s Shapley additive explanations (SHAP), and not a causal ranking. |
-| Do two nonparametric distances agree? | Unbiased squared maximum mean discrepancy (MMD²), radial basis function (RBF) kernel, median-heuristic bandwidth; energy distance. Permutation p-values. Continuous columns are source-median-imputed and source-standardized. Categoricals are one-hot of the top 10 source levels. Each group is capped at 2,000 rows. | These do not depend on trees. The row cap limits power. They cannot turn the verdict severe. |
-| Did rank correlations change? | Spearman matrices. Permutation test on the Frobenius norm of the upper triangle. Per pair, Fisher z with variance 1.06/(n−3), then Benjamini–Hochberg (BH). Capped at 20,000 rows. | A global norm can hide one large pair change, and one pair can be a term the model uses. |
-| Are values outside the training tails? | Share of new values outside the source 0.5%–99.5% quantiles, one-sided binomial test against the expected tail share, Benjamini–Hochberg (BH) across features. Also the share beyond the source min and max. | Quantiles, so one training outlier does not define the support. |
+| Did missingness change? | Two-proportion z-test and Cohen’s h per feature. Separately, chi-square and JS on the joint missingness pattern. | Observed values can match while the missing rate changes, and LightGBM’s missing branch then applies to a different fraction of rows. |
+| Can any function of the features tell the populations apart? | Domain classifier model: LightGBM, 200 trees, learning rate 0.05, 31 leaves, row and column subsampling 0.8, L2 penalty 1. Label is population membership, never the business target. Metric is stratified 5-fold OOF ROC AUC. | Per-feature tests miss a shift that exists only as a combination. The AUC does not depend on a cutoff and stays 0.5 when the score distributions match, which matters because the group sizes differ. OOF scoring stops the trees being graded on rows they just fitted. Hyperparameters are fixed, so the AUC is not the winner of a model search (Friedman 2003; Lopez-Paz and Oquab 2017). |
+| Could that AUC arise under no shift? | Two nulls. Shuffle the population label and refit the cross-validation (`n_classifier_permutations`, default 20). And the training-split baseline above. A Mann–Whitney test on the held-out scores is stored; for fixed scores it is the same comparison as AUC (Hanley and McNeil 1982) but it treats the scores as given, so the verdict uses the permutation p-value. | The permutation null breaks only the population label. The baseline asks whether the same AUC appears when both groups are random pieces of the training population. |
+| Which inputs drive that separation? | Gain (total loss reduction) from one fit on all rows, as a share of total gain. | Descriptive of that fit. Not the business model’s SHAP, and not a causal ranking. |
+| Do two nonparametric distances agree? | Unbiased MMD², RBF kernel, median-heuristic bandwidth; energy distance. Permutation p-values. Continuous columns are source-median-imputed and source-standardized. Categoricals are one-hot of the top 10 source levels. Each group is capped at 2,000 rows. | These do not depend on trees. The row cap limits power. They cannot turn the verdict severe. |
+| Did rank correlations change? | Spearman matrices. Permutation test on the Frobenius norm of the upper triangle. Per pair, Fisher z with variance 1.06/(n−3), then BH. Capped at 20,000 rows. | A global norm can hide one large pair change, and one pair can be a term the model uses. |
+| Are values outside the training tails? | Share of new values outside the source 0.5%–99.5% quantiles, one-sided binomial test against the expected tail share, BH across features. Also the share beyond the source min and max. | Quantiles, so one training outlier does not define the support. |
 | What share of new rows has no training neighbors? | Isolation Forest fitted on 70% of source rows. The threshold is the 1% quantile of scores on the held-out 30%, so the null share is 1% by construction. One-sided binomial test. Capped at 100,000 rows. | A product of per-feature ranges can still leave holes. |
-| Did the score distribution change? | Kolmogorov–Smirnov (KS) and Population Stability Index (PSI) on predicted probabilities. Two-proportion z-test and Cohen’s h on the positive rate at the operating threshold, and the same test for the share of scores within ±0.05 of that threshold. | A small location shift can move the approval rate without a large Population Stability Index (PSI). The two questions are separate signals. |
-| Did the reasons for the scores change? | TreeSHAP (Shapley additive explanations) via `pred_contrib`, at most 5,000 rows per population. Kolmogorov–Smirnov (KS) on contributions. Spearman correlation of mean absolute Shapley additive explanations (SHAP). | A similar score histogram can be produced by different features. |
+| Did the score distribution change? | KS and PSI on predicted probabilities. Two-proportion z-test and Cohen’s h on the positive rate at the operating threshold, and the same test for the share of scores within ±0.05 of that threshold. | A small location shift can move the approval rate without a large PSI. The two questions are separate signals. |
+| Did the reasons for the scores change? | TreeSHAP via `pred_contrib`, at most 5,000 rows per population. KS on contributions. Spearman correlation of mean absolute SHAP. | A similar score histogram can be produced by different features. |
 
 ### Performance without labels
 
@@ -109,17 +109,17 @@ If these rows disagree, do not quote one of them as the performance on the new p
 
 | Estimator | What it computes | Assumption |
 |---|---|---|
-| Calibration | Brier, expected calibration error (ECE) on 10 equal-width bins, slope and intercept of a logistic regression of the label on logit(score). | Computed on the evaluation set in a dual run. Optimistic if those rows were used to fit the model. Expected calibration error (ECE) > 0.05 downgrades confidence-based performance estimation (CBPE) to `info`. |
-| Importance weighting | Domain-classifier out-of-fold (OOF) scores become weights `w = p/(1−p) × n_source/n_target`, clipped at the 0.99 quantile. Kish effective sample size (ESS). Weighted area under the curve (AUC), Brier, and log loss (binary) or root mean squared error (RMSE) and mean absolute error (MAE) (regression), with a bootstrap interval, compared with the unweighted metrics on the same rows. | Covariate shift only: P(y\|x) is unchanged and the domain classifier estimates the density ratio. The factor `n_source/n_target` converts classifier odds into a density ratio when the groups differ in size. |
-| Confidence-based performance estimation (CBPE) | Expected area under the curve (AUC) from pairs of predicted probabilities (ties count as 0.5). The reference is the same functional on the source scores, reported next to the realized source area under the curve (AUC). | Calibrated probabilities and an unchanged map from features to labels. Using the same functional on both populations avoids calling a calibration defect a population shift. |
-| Black-box shift estimation (BBSE) | Source confusion matrix C, new prediction rates μ, weights C⁻¹μ, prior renormalized. Interval by resampling both populations. | P(x\|y) is unchanged (label shift). Under covariate shift this estimator is the wrong model. |
+| Calibration | Brier, ECE on 10 equal-width bins, slope and intercept of a logistic regression of the label on logit(score). | Computed on the evaluation set in a dual run. Optimistic if those rows were used to fit the model. ECE > 0.05 downgrades CBPE to `info`. |
+| Importance weighting | Domain-classifier OOF scores become weights `w = p/(1−p) × n_source/n_target`, clipped at the 0.99 quantile. Kish ESS. Weighted AUC, Brier, and log loss (binary) or RMSE and MAE (regression), with a bootstrap interval, compared with the unweighted metrics on the same rows. | Covariate shift only: P(y\|x) is unchanged and the domain classifier estimates the density ratio. The factor `n_source/n_target` converts classifier odds into a density ratio when the groups differ in size. |
+| CBPE | Expected AUC from pairs of predicted probabilities (ties count as 0.5). The reference is the same functional on the source scores, reported next to the realized source AUC. | Calibrated probabilities and an unchanged map from features to labels. Using the same functional on both populations avoids calling a calibration defect a population shift. |
+| BBSE | Source confusion matrix C, new prediction rates μ, weights C⁻¹μ, prior renormalized. Interval by resampling both populations. | P(x\|y) is unchanged (label shift). Under covariate shift this estimator is the wrong model. |
 
 ## Configuration a user is expected to set
 
 | Field | Default | Set it from |
 |---|---|---|
 | `decision_threshold` | 0.5 | The cutoff the deployed model uses |
-| `performance_tolerance` | 0.02 | The area under the curve (AUC) drop, or relative error increase, that should count as material |
+| `performance_tolerance` | 0.02 | The AUC drop, or relative error increase, that should count as material |
 | `problem_type` | `binary` | `binary` or `regression` |
 | `n_rounds` | 30 | Leave at 30 or higher for a decision |
 | `subset_size` | `n_new` inside `compare` | Row count of the new population. With `--test`, each reference is matched separately. |
@@ -139,7 +139,7 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 
 `runs/comparison/decision.json` holds `verdict`, `verdict_level` (`severe`, `moderate`, or `mild`), `verdict_rule`, `signals` (each with a `pair`), `task_pairs`, `n_severe`, `n_moderate`, `warnings`, and the baseline path.
 
-`runs/comparison/tables/<task>__<table>.csv` is the full table for that task. Global rows use `feature="__global__"`. Registered comparison metrics are oriented so that larger means more drift (absolute standardized mean difference (SMD), absolute log variance ratio, `1 − ρ`, `1 − effective sample size (ESS) ratio`, degradation).
+`runs/comparison/tables/<task>__<table>.csv` is the full table for that task. Global rows use `feature="__global__"`. Registered comparison metrics are oriented so that larger means more drift (absolute SMD, absolute log variance ratio, `1 − ρ`, `1 − ESS ratio`, degradation).
 
 `metadata.json` records sizes, the feature list and types, whether a model and a label were supplied, the full config, failed tasks, elapsed time, and library versions.
 
@@ -150,4 +150,61 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 - Friedman, J. (2003). On multivariate goodness-of-fit and two-sample testing.
 - Hanley, J. A. and McNeil, B. J. (1982). The meaning and use of the area under a receiver operating characteristic curve. *Radiology*.
 - Lopez-Paz, D. and Oquab, M. (2017). Revisiting classifier two-sample tests. International Conference on Learning Representations (ICLR).
-- Siddiqi, N. (2006). *Credit Risk Scorecards*. Population Stability Index (PSI) conventions 0.10 and 0.25.
+- Siddiqi, N. (2006). *Credit Risk Scorecards*. PSI conventions 0.10 and 0.25.
+
+## Appendix
+
+### Tests
+
+| Acronym | Meaning | Reading |
+|---|---|---|
+| KS | Kolmogorov–Smirnov | Two-sample test of one continuous distribution. Adjusted p below α: the distributions differ. Size is KS D. |
+| AD | Anderson–Darling | Two-sample test with more weight in the tails than KS. Adjusted p below α: the tails differ. Not a severity size. |
+| CvM | Cramér–von Mises | Two-sample test of the full ECDF gap, not only its maximum. Adjusted p below α: the distributions differ. Not a severity size. |
+| TOST | two one-sided tests | Equivalence test for two means, margin 0.10 SD. p below α: means agree. Not a test of variance or shape. |
+| BH | Benjamini–Hochberg | False-discovery adjustment inside one p-value family. Significant means adjusted p below α. |
+
+| Test | Reading |
+|---|---|
+| Chi-square | Test that two samples share one discrete distribution. Levels with expected count below 5 are merged. Adjusted p below α: the category shares differ. Also used on the joint missingness pattern. Size is Cramér's V. |
+| Two-proportion z-test | Test that two samples share a rate. Used for missingness, the predicted positive rate, and the share of scores within 0.05 of the threshold. Adjusted p below α: the rates differ. Size is Cohen's h. |
+| Permutation test | Shuffle the population label and recompute the statistic. p = (1 + shuffles at least as large) / (1 + shuffles). Used for domain-classifier AUC, MMD², energy distance, and the Spearman-matrix Frobenius norm. |
+| Mann–Whitney | Test that domain-classifier scores are higher for new rows than for training rows. For fixed scores this is the same comparison as AUC. The verdict uses the permutation p, because the scores were fitted on these rows. |
+| Fisher z | Test that one Spearman correlation differs between the samples. The z variance is 1.06/(n−3) in each sample (Fieller, Hartley, and Pearson 1957). Adjusted p below α: that pair changed. |
+| Binomial test | One-sided test that the new share outside the training 0.5–99.5% range, or the isolation-forest outlier share, exceeds the share expected from the training rule. Adjusted p below α: more new rows fall outside support. |
+| Baseline empirical p | Share of random reference splits at least as large as the new population: (1 + such rounds) / (1 + rounds). Beyond baseline means the statistic exceeds that reference's 95th percentile. |
+
+### Magnitudes
+
+| Acronym | Meaning | Reading |
+|---|---|---|
+| KS D | Kolmogorov–Smirnov statistic | Largest vertical gap between the two ECDFs, from 0 to 1. 0.20 means the cumulative shares differ by 20 percentage points at that gap. Distance only: no sign, and it does not separate a mean shift from a spread or tail change. ≥ 0.10 moderate, ≥ 0.20 large, and only with adjusted p below α and a value above the baseline 95th percentile. The same reading applies to score KS D and SHAP KS D. |
+| PSI | Population Stability Index | Change in bin shares. Below 0.10 stable, 0.10–0.25 monitor, above 0.25 large. |
+| SMD | standardized mean difference | Mean gap divided by pooled SD. Absolute SMD ≥ 0.10 small, ≥ 0.50 large. |
+| JS | Jensen–Shannon | Distance between category shares. 0 means the same frequencies; larger means less overlap. |
+| MMD | maximum mean discrepancy | Kernel distance between the two samples. Larger means the joint distributions differ. Cannot be severe. |
+| MMD² | squared maximum mean discrepancy | Square of MMD, the stored number. Same reading as MMD. |
+| RBF | radial basis function | Kernel used for MMD. Bandwidth is the median distance between rows. |
+| ECE | expected calibration error | Mean gap between predicted probability and observed rate. Above 0.05, probabilities are off and CBPE is info. |
+| ESS | effective sample size | Kish ratio after weighting. Above 0.50 usable, 0.10–0.50 caution, below 0.10 the weights have collapsed. |
+| SD | standard deviation | Spread of one column. SMD and Wasserstein/SD are in these units. |
+
+### Scores
+
+| Acronym | Meaning | Reading |
+|---|---|---|
+| AUC | area under the curve | Area under the ROC curve. 0.5 means no separation. Domain classifier: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe. |
+| ROC | receiver operating characteristic | True-positive rate against false-positive rate across cutoffs. AUC is its area. |
+| SHAP | Shapley additive explanations | A feature's additive contribution to one score. Mean absolute SHAP rank correlation below 0.80: the ranking of reasons changed. |
+| TreeSHAP | Shapley additive explanations from trees | SHAP for a tree model, from LightGBM pred_contrib. |
+| OOF | out-of-fold | Score from a model that did not train on that row. |
+
+### Estimates
+
+| Acronym | Meaning | Reading |
+|---|---|---|
+| CBPE | confidence-based performance estimation | Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores. |
+| BBSE | black-box shift estimation | Estimated new class prior. Usable only if P(x given y) is unchanged. |
+| CI | confidence interval | Range for an estimate. Performance is severe only when the whole interval lies past the tolerance. |
+| RMSE | root mean squared error | Square root of mean squared error. Larger is worse. |
+| MAE | mean absolute error | Average absolute error. Larger is worse. |

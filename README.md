@@ -28,8 +28,8 @@ With `--test`, `--train` is the fit set and `--test` is the evaluation set:
 
 | Tests | Pair |
 |---|---|
-| Margins, missingness, domain classifier, kernel tests, correlations, support | Fit set vs new |
-| Scores, positive rate, TreeSHAP (Shapley additive explanations), weighting, confidence-based performance estimation (CBPE), black-box shift estimation (BBSE) | Evaluation set vs new |
+| Per-feature distributions, missingness, domain classifier, kernel tests, correlations, support | Fit set vs new |
+| Scores, positive rate, TreeSHAP, weighting, CBPE, BBSE | Evaluation set vs new |
 | Calibration | Evaluation set |
 
 Each reference needs at least `n_new + 30` rows, and the new table needs at least 30. Use 30 rounds for a decision (the empirical p-value cannot be smaller than `1/(rounds + 1)`).
@@ -83,7 +83,7 @@ python -m population_drift.report --comparison runs/comparison --out runs/report
 | `runs/report.html` | Report. Each section names the pair that test used. |
 | `runs/comparison/decision.json` | `verdict_level` (`severe`, `moderate`, `mild`), signals, and `task_pairs`. |
 
-`severe` means do not use the model as is. `moderate` means use only with review. `mild` means no severe signal, at most two moderate signals, and no moderate signal on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP (Shapley additive explanations) on the population used for that comparison.
+`severe` means do not use the model as is. `moderate` means use only with review. `mild` means no severe signal, at most two moderate signals, and no moderate signal on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP on the population used for that comparison.
 
 A mild label is not a measurement of accuracy on the new population. The run does not test whether a given feature vector still maps to the same label. The performance numbers are estimates under the assumptions in [docs/reference.md](docs/reference.md).
 
@@ -140,3 +140,41 @@ paired = pdrift.run_paired_comparison(
 ```
 
 `run_comparison` uses one labelled table for every test. `run_paired_comparison` assigns each test to the fit set or the evaluation set. `decision["verdict_level"]` is `severe`, `moderate`, or `mild`.
+
+## Appendix
+
+### Tests
+
+| Acronym | Meaning | Reading |
+|---|---|---|
+| KS | Kolmogorov–Smirnov | Two-sample test of one continuous distribution. Adjusted p below α: the distributions differ. Size is KS D. |
+
+| Test | Reading |
+|---|---|
+| Chi-square | Test that two samples share one discrete distribution. Levels with expected count below 5 are merged. Adjusted p below α: the category shares differ. Also used on the joint missingness pattern. Size is Cramér's V. |
+| Two-proportion z-test | Test that two samples share a rate. Used for missingness, the predicted positive rate, and the share of scores within 0.05 of the threshold. Adjusted p below α: the rates differ. Size is Cohen's h. |
+| Permutation test | Shuffle the population label and recompute the statistic. p = (1 + shuffles at least as large) / (1 + shuffles). Used for domain-classifier AUC, MMD², energy distance, and the Spearman-matrix Frobenius norm. |
+| Mann–Whitney | Test that domain-classifier scores are higher for new rows than for training rows. For fixed scores this is the same comparison as AUC. The verdict uses the permutation p, because the scores were fitted on these rows. |
+| Fisher z | Test that one Spearman correlation differs between the samples. The z variance is 1.06/(n−3) in each sample (Fieller, Hartley, and Pearson 1957). Adjusted p below α: that pair changed. |
+| Binomial test | One-sided test that the new share outside the training 0.5–99.5% range, or the isolation-forest outlier share, exceeds the share expected from the training rule. Adjusted p below α: more new rows fall outside support. |
+| Baseline empirical p | Share of random reference splits at least as large as the new population: (1 + such rounds) / (1 + rounds). Beyond baseline means the statistic exceeds that reference's 95th percentile. |
+
+### Magnitudes
+
+| Acronym | Meaning | Reading |
+|---|---|---|
+| PSI | Population Stability Index | Change in bin shares. Below 0.10 stable, 0.10–0.25 monitor, above 0.25 large. |
+
+### Scores
+
+| Acronym | Meaning | Reading |
+|---|---|---|
+| AUC | area under the curve | Area under the ROC curve. 0.5 means no separation. Domain classifier: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe. |
+| TreeSHAP | Shapley additive explanations from trees | SHAP for a tree model, from LightGBM pred_contrib. |
+
+### Estimates
+
+| Acronym | Meaning | Reading |
+|---|---|---|
+| CBPE | confidence-based performance estimation | Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores. |
+| BBSE | black-box shift estimation | Estimated new class prior. Usable only if P(x given y) is unchanged. |
