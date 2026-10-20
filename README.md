@@ -20,6 +20,8 @@ pip install -r requirements.txt
 
 ## Compare your own populations
 
+Open `run_drift.ipynb`, edit the paths in the settings cell, and run all cells. The same fields can be edited at the top of `run_drift.py` and run with `python run_drift.py`.
+
 The new table has the same features and no labels. Levels are **severe**, **moderate**, and **mild**.
 
 Without `--test`, every test uses `--train` against the new table. The toolkit does not split `--train`.
@@ -34,7 +36,7 @@ With `--test`, `--train` is the fit set and `--test` is the evaluation set:
 
 Each reference needs at least `n_new + 30` rows, and the new table needs at least 30. Use 30 rounds for a decision (the empirical p-value cannot be smaller than `1/(rounds + 1)`).
 
-CSV, Parquet, and Feather are accepted. Pass missing codes with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct training values is treated as categorical anyway, because the Kolmogorov–Smirnov (KS) statistic is not valid under heavy ties. Leave identifiers, the time column, and anything built from the label or the score out of the feature list.
+CSV, Parquet, and Feather are accepted. Pass the fitted LightGBM estimator as a pickle with `--model` (`.pkl`, `.pickle`, or `.joblib`). Pass missing codes with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct training values is treated as categorical anyway, because the Kolmogorov–Smirnov (KS) statistic is not valid under heavy ties. Leave identifiers, the time column, and anything built from the label or the score out of the feature list.
 
 ```bash
 python -m population_drift compare \
@@ -43,7 +45,7 @@ python -m population_drift compare \
   --features-file data/features.txt \
   --categorical country,channel \
   --label-col target \
-  --model data/model.txt \
+  --model data/model.pkl \
   --missing-sentinels -999 \
   --threshold 0.5 \
   --performance-tolerance 0.02 \
@@ -63,16 +65,18 @@ python -m population_drift compare \
   --new data/new.parquet \
   --features-file data/features.txt \
   --label-col target \
-  --model data/model.txt \
+  --model data/model.pkl \
   --out runs/comparison \
   --report runs/report.html
 ```
 
-Regenerate the report from a finished directory:
+Regenerate the HTML and markdown reports from a finished directory:
 
 ```bash
 python -m population_drift.report --comparison runs/comparison --out runs/report.html
 ```
+
+That also writes `runs/report.md` and PNG plots under `runs/report_plots/`.
 
 `baseline` builds one source-vs-source null. Pass it to `compare` with `--baseline` when there is no `--test`. With `--test`, each reference gets its own baseline inside the output directory.
 
@@ -80,7 +84,8 @@ python -m population_drift.report --comparison runs/comparison --out runs/report
 
 | Path | Contents |
 |---|---|
-| `runs/report.html` | Report. Each section names the pair that test used. |
+| `runs/report.html` | Report. Each section names the pair that test used. Plots are embedded. |
+| `runs/report.md` | Same report as markdown. Plots are PNG files under `runs/report_plots/`. |
 | `runs/comparison/decision.json` | `verdict_level` (`severe`, `moderate`, `mild`), signals, and `task_pairs`. |
 
 `severe` means do not use the model as is. `moderate` means use only with review. `mild` means no severe signal, at most two moderate signals, and no moderate signal on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP on the population used for that comparison.
@@ -95,13 +100,18 @@ A mild label is not a measurement of accuracy on the new population. The run doe
 
 ```bash
 python examples/make_synthetic_data.py --out demo_data
+```
+
+The notebook defaults already point at `demo_data/`. Open `run_drift.ipynb` and run all cells, or:
+
+```bash
 python -m population_drift compare \
   --train demo_data/train.csv \
   --new demo_data/new.csv \
   --features-file demo_data/features.txt \
   --categorical c01,c02,c03,c04 \
   --label-col target \
-  --model demo_data/model.txt \
+  --model demo_data/model.pkl \
   --n-rounds 10 \
   --out runs/comparison \
   --report runs/report.html
@@ -111,6 +121,8 @@ python -m population_drift compare \
 
 | Path | Role |
 |---|---|
+| `run_drift.ipynb` | Edit paths and run a comparison in Jupyter |
+| `run_drift.py` | Same runner as the notebook (`python run_drift.py`) |
 | `population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
 | `population_drift/report.py` | HTML report (`python -m population_drift.report`) |
 | `examples/make_synthetic_data.py` | Example files only. Not imported by the toolkit. |
@@ -121,6 +133,7 @@ python -m population_drift compare \
 ```python
 import population_drift as pdrift
 
+model = pdrift.load_model("data/model.pkl")
 config = pdrift.DriftConfig(problem_type="binary", decision_threshold=0.5)
 result = pdrift.population_drift_analyzer(train, new, features, categorical, model, "target", config)
 result.table("continuous")

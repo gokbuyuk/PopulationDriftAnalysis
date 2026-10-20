@@ -24,6 +24,7 @@ import argparse
 import dataclasses
 import json
 import logging
+import pickle
 import platform
 import sys
 import time
@@ -1048,15 +1049,59 @@ def detect_joint_outliers(source: pd.DataFrame, target: pd.DataFrame, columns: S
 # Model helpers and model-based tasks
 # --------------------------------------------------------------------------------------
 def load_model(path: str | Path) -> Any:
-    """Load a LightGBM model: native text/model file (Booster) or a pickled/joblib estimator."""
+    """Load a pickled LightGBM estimator (``.pkl``) or a native Booster text file.
+
+    Args:
+        path: Model file. ``.pkl`` / ``.pickle`` are pickle or joblib dumps;
+            ``.joblib`` is joblib; ``.txt`` / ``.model`` / ``.lgb`` are Booster files.
+
+    Returns:
+        The unpickled estimator or a ``lightgbm.Booster``.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
+        ValueError: If the suffix is not a supported model format, or a pickle cannot be read.
+        TypeError: If ``path`` is empty.
+    """
+    if path is None or str(path).strip() == "":
+        raise TypeError("Model path is empty.")
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Model file not found: {path}")
-    if path.suffix.lower() in {".txt", ".model", ".lgb"}:
-        return lgb.Booster(model_file=str(path))
-    if path.suffix.lower() in {".pkl", ".pickle", ".joblib"}:
+    suffix = path.suffix.lower()
+    if suffix in {".pkl", ".pickle"}:
+        return _load_pickle(path)
+    if suffix == ".joblib":
         return joblib.load(path)
-    raise ValueError(f"Unsupported model file '{path.suffix}'. Use .txt/.model (Booster) or .pkl/.joblib.")
+    if suffix in {".txt", ".model", ".lgb"}:
+        return lgb.Booster(model_file=str(path))
+    raise ValueError(f"Unsupported model file '{path.suffix}'. Use .pkl/.pickle/.joblib or .txt/.model.")
+
+
+def _load_pickle(path: Path) -> Any:
+    """Unpickle a LightGBM estimator from ``.pkl``.
+
+    Tries ``pickle.load`` first, then ``joblib.load`` for joblib dumps saved with a ``.pkl`` suffix.
+
+    Args:
+        path: Existing pickle path.
+
+    Returns:
+        The unpickled object.
+
+    Raises:
+        ValueError: If neither pickle nor joblib can read the file.
+    """
+    try:
+        with path.open("rb") as handle:
+            return pickle.load(handle)
+    except Exception as pickle_error:
+        try:
+            return joblib.load(path)
+        except Exception as joblib_error:
+            raise ValueError(
+                f"Could not load pickled model {path}: pickle: {pickle_error}; joblib: {joblib_error}."
+            ) from joblib_error
 
 
 def model_feature_names(model: Any) -> list[str] | None:
@@ -2389,7 +2434,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--exclude", help="Columns to exclude when no feature list is given (IDs, dates).")
     common.add_argument("--categorical", help="Comma-separated categorical feature columns.")
     common.add_argument("--label-col", help="Label column in the training population (optional).")
-    common.add_argument("--model", help="LightGBM model: Booster .txt or pickled/joblib estimator (optional).")
+    common.add_argument("--model", help="Pickled LightGBM estimator (.pkl/.pickle/.joblib) or Booster .txt (optional).")
     common.add_argument("--problem-type", choices=["binary", "regression"], default="binary")
     common.add_argument("--threshold", type=float, default=0.5, help="Decision threshold for binary models.")
     common.add_argument("--missing-sentinels", help="Comma-separated codes to treat as missing, e.g. -999.")

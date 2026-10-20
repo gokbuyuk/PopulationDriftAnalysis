@@ -143,6 +143,8 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 
 `metadata.json` records sizes, the feature list and types, whether a model and a label were supplied, the full config, failed tasks, elapsed time, and library versions.
 
+`--report` writes a standalone HTML file with embedded plots and a markdown copy beside it. The markdown file references PNG files in `{report stem}_plots/`.
+
 ## References
 
 - Austin, P. C. (2009). Using the standardized difference to compare the prevalence of a binary variable between two groups. *Communications in Statistics — Simulation and Computation*.

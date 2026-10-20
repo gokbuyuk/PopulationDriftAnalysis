@@ -1,7 +1,8 @@
-"""Example only: write a fake labelled table, a shifted unlabelled table, and a LightGBM model.
+"""Example only: write a fake labelled table, a shifted unlabelled table, and a pickled LightGBM model.
 
 This script is not part of the population-drift analysis. ``population_drift`` does not
 import it. Files are written under ``demo_data/`` by default, and that directory is gitignored.
+The fitted estimator is written as ``model.pkl``.
 
 The labelled draw is cut in generation order. The first 80% is ``train.csv`` and is the
 table the example model is fitted on. The last 20% is ``evaluation.csv``. ``new.csv``
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import pickle
 from pathlib import Path
 
 import lightgbm as lgb
@@ -59,7 +61,7 @@ def make_population(n_rows: int, shifted: bool, rng: np.random.Generator) -> pd.
     return frame
 
 
-def train_model(train: pd.DataFrame, seed: int) -> lgb.Booster:
+def train_model(train: pd.DataFrame, seed: int) -> lgb.LGBMClassifier:
     """Fit a LightGBM binary classifier on the example fit rows.
 
     Args:
@@ -67,7 +69,7 @@ def train_model(train: pd.DataFrame, seed: int) -> lgb.Booster:
         seed: LightGBM ``random_state``.
 
     Returns:
-        The fitted booster.
+        The fitted sklearn estimator. Dump this object as ``model.pkl``.
 
     Raises:
         ValueError: If ``target`` is missing.
@@ -81,7 +83,7 @@ def train_model(train: pd.DataFrame, seed: int) -> lgb.Booster:
         n_estimators=300, learning_rate=0.05, num_leaves=15, random_state=seed, verbose=-1,
     )
     model.fit(features, train["target"])
-    return model.booster_
+    return model
 
 
 def main() -> None:
@@ -149,12 +151,28 @@ def _write_example(out: Path, labeled: pd.DataFrame, new: pd.DataFrame, seed: in
     evaluation.to_csv(out / "evaluation.csv", index=False)
     new.to_csv(out / "new.csv", index=False)
     (out / "features.txt").write_text("\n".join(CONTINUOUS + CATEGORICAL) + "\n")
-    train_model(fit_rows, seed).save_model(str(out / "model.txt"))
+    _write_pickle(out / "model.pkl", train_model(fit_rows, seed))
     logger.info(
-        "Example files in %s: train.csv (%d fit rows), evaluation.csv (%d rows), new.csv (%d rows). "
-        "These files are not part of the toolkit.",
+        "Example files in %s: train.csv (%d fit rows), evaluation.csv (%d rows), new.csv (%d rows), "
+        "model.pkl. These files are not part of the toolkit.",
         out, len(fit_rows), len(evaluation), len(new),
     )
+
+
+def _write_pickle(path: Path, model: lgb.LGBMClassifier) -> None:
+    """Serialize the fitted estimator as a pickle file.
+
+    Args:
+        path: Destination ``.pkl`` path.
+        model: Fitted LightGBM sklearn estimator.
+
+    Raises:
+        ValueError: If ``path`` does not end in ``.pkl`` or ``.pickle``.
+    """
+    if path.suffix.lower() not in {".pkl", ".pickle"}:
+        raise ValueError(f"Pickle path must end in .pkl or .pickle, got {path.suffix}.")
+    with path.open("wb") as handle:
+        pickle.dump(model, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 if __name__ == "__main__":
