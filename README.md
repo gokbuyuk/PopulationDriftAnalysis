@@ -20,6 +20,8 @@ pip install -r requirements.txt
 
 ## Compare your own populations
 
+Open `run_drift.ipynb`, edit the paths in the settings cell, and run all cells. The same fields can be edited at the top of `run_drift.py` and run with `python run_drift.py`.
+
 The new table has the same features and no labels. Levels are **severe**, **moderate**, and **mild**.
 
 Without `--test`, every test uses `--train` against the new table. The toolkit does not split `--train`.
@@ -95,6 +97,11 @@ A mild label is not a measurement of accuracy on the new population. The run doe
 
 ```bash
 python examples/make_synthetic_data.py --out demo_data
+```
+
+The notebook defaults already point at `demo_data/`. Open `run_drift.ipynb` and run all cells, or:
+
+```bash
 python -m population_drift compare \
   --train demo_data/train.csv \
   --new demo_data/new.csv \
@@ -111,6 +118,8 @@ python -m population_drift compare \
 
 | Path | Role |
 |---|---|
+| `run_drift.ipynb` | Edit paths and run a comparison in Jupyter |
+| `run_drift.py` | Same runner as the notebook (`python run_drift.py`) |
 | `population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
 | `population_drift/report.py` | HTML report (`python -m population_drift.report`) |
 | `examples/make_synthetic_data.py` | Example files only. Not imported by the toolkit. |
