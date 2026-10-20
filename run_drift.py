@@ -32,7 +32,7 @@ NEW_PATH = "demo_data/new.csv"
 FEATURES_FILE = "demo_data/features.txt"
 CATEGORICAL = "c01,c02,c03,c04"
 LABEL_COL = "target"
-MODEL_PATH = "demo_data/model.txt"
+MODEL_PATH = "demo_data/model.pkl"
 MISSING_SENTINELS = ""
 OUTPUT_DIR = "runs/comparison"
 REPORT_PATH = "runs/report.html"
@@ -53,7 +53,7 @@ class DriftRunSettings:
         features_file: One feature name per line, or blank to infer.
         categorical: Comma-separated categorical columns.
         label_col: Label column on the labelled table(s).
-        model_path: LightGBM model path, or blank for feature-only checks.
+        model_path: Pickled LightGBM estimator (``.pkl``), or blank for feature-only checks.
         missing_sentinels: Comma-separated missing codes.
         output_dir: Comparison output directory.
         report_path: HTML report path.

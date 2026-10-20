@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from run_drift import DriftRun, DriftRunSettings, ROOT, set_working_directory
+from run_drift import MODEL_PATH, DriftRun, DriftRunSettings, ROOT, set_working_directory
 
 
 def _write(path: Path, text: str = "x") -> Path:
@@ -82,7 +82,7 @@ def test_build_argv_includes_optional_files_when_they_exist(tmp_path: Path) -> N
     """Non-blank optional paths are resolved and passed as flags."""
     test = _write(tmp_path / "evaluation.csv")
     features = _write(tmp_path / "features.txt", "f01\n")
-    model = _write(tmp_path / "model.txt")
+    model = _write(tmp_path / "model.pkl")
     argv = DriftRun(
         _settings(
             tmp_path,
@@ -147,8 +147,16 @@ def test_notebook_settings_cell_builds_the_same_argv_shape() -> None:
     _check("DriftRunSettings(" in joined, True, "settings constructed in a cell")
     _check("demo_data/train.csv" in joined, True, "demo train path")
     _check("demo_data/new.csv" in joined, True, "demo new path")
+    _check("demo_data/model.pkl" in joined, True, "demo pickle model path")
+    _check("demo_data/model.txt" in joined, False, "demo model is not a LightGBM text file")
     _check("DriftRun(settings).run()" in joined, True, "run call")
     for index, cell in enumerate(notebook["cells"]):
         if cell.get("cell_type") != "code":
             continue
         compile("".join(cell.get("source", [])), f"run_drift.ipynb:cell{index}", "exec")
+
+
+def test_default_model_path_is_a_pickle_file() -> None:
+    """The runner expects a pickled LightGBM estimator."""
+    _check(Path(MODEL_PATH).suffix, ".pkl", "MODEL_PATH suffix")
+    _check(MODEL_PATH, "demo_data/model.pkl", "default MODEL_PATH")

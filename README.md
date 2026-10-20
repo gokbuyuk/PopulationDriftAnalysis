@@ -36,7 +36,7 @@ With `--test`, `--train` is the fit set and `--test` is the evaluation set:
 
 Each reference needs at least `n_new + 30` rows, and the new table needs at least 30. Use 30 rounds for a decision (the empirical p-value cannot be smaller than `1/(rounds + 1)`).
 
-CSV, Parquet, and Feather are accepted. Pass missing codes with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct training values is treated as categorical anyway, because the Kolmogorov–Smirnov (KS) statistic is not valid under heavy ties. Leave identifiers, the time column, and anything built from the label or the score out of the feature list.
+CSV, Parquet, and Feather are accepted. Pass the fitted LightGBM estimator as a pickle with `--model` (`.pkl`, `.pickle`, or `.joblib`). Pass missing codes with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct training values is treated as categorical anyway, because the Kolmogorov–Smirnov (KS) statistic is not valid under heavy ties. Leave identifiers, the time column, and anything built from the label or the score out of the feature list.
 
 ```bash
 python -m population_drift compare \
@@ -45,7 +45,7 @@ python -m population_drift compare \
   --features-file data/features.txt \
   --categorical country,channel \
   --label-col target \
-  --model data/model.txt \
+  --model data/model.pkl \
   --missing-sentinels -999 \
   --threshold 0.5 \
   --performance-tolerance 0.02 \
@@ -65,7 +65,7 @@ python -m population_drift compare \
   --new data/new.parquet \
   --features-file data/features.txt \
   --label-col target \
-  --model data/model.txt \
+  --model data/model.pkl \
   --out runs/comparison \
   --report runs/report.html
 ```
@@ -108,7 +108,7 @@ python -m population_drift compare \
   --features-file demo_data/features.txt \
   --categorical c01,c02,c03,c04 \
   --label-col target \
-  --model demo_data/model.txt \
+  --model demo_data/model.pkl \
   --n-rounds 10 \
   --out runs/comparison \
   --report runs/report.html
@@ -130,6 +130,7 @@ python -m population_drift compare \
 ```python
 import population_drift as pdrift
 
+model = pdrift.load_model("data/model.pkl")
 config = pdrift.DriftConfig(problem_type="binary", decision_threshold=0.5)
 result = pdrift.population_drift_analyzer(train, new, features, categorical, model, "target", config)
 result.table("continuous")
