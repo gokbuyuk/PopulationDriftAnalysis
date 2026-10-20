@@ -4,7 +4,8 @@ Usage:
     python -m population_drift.report --comparison runs/comparison --out runs/report.html
     python -m population_drift.report --baseline runs/baseline --out runs/baseline.html
 
-The report embeds all plots (PNG, base64) and styles, so it is a single self-contained file.
+The report embeds all plots (PNG, base64) and styles, so the HTML file is self-contained.
+A markdown copy is written next to it, with the same plots saved as PNG files.
 """
 from __future__ import annotations
 
@@ -229,6 +230,7 @@ _SRC_RE = re.compile(r'src="data:image/[^"]*"')
 _TAG_RE = re.compile(r"<[^>]+>")
 _CODE_RE = re.compile(r"<code>.*?</code>", re.S)
 _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+_MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 _TABLE_LINE_RE = re.compile(r"^\|.+\|[ \t]*$")
 
 
@@ -306,6 +308,39 @@ def _hold_code(text: str) -> tuple[str, list[str]]:
     return _CODE_RE.sub(stash, _INLINE_CODE_RE.sub(stash, text)), held
 
 
+def _hold_images(text: str) -> tuple[str, list[str]]:
+    """Replace markdown images with placeholders so acronym expansion skips them.
+
+    Args:
+        text: Markdown fragment.
+
+    Returns:
+        The fragment with images removed, and the image markup in order.
+    """
+    held: list[str] = []
+
+    def stash(match: re.Match[str]) -> str:
+        held.append(match.group(0))
+        return f"\x00I{len(held) - 1}\x00"
+
+    return _MD_IMAGE_RE.sub(stash, text), held
+
+
+def _restore_images(text: str, held: list[str]) -> str:
+    """Put markdown images back.
+
+    Args:
+        text: Fragment with image placeholders.
+        held: Image markup from ``_hold_images``.
+
+    Returns:
+        The fragment with images restored.
+    """
+    for index, piece in enumerate(held):
+        text = text.replace(f"\x00I{index}\x00", piece)
+    return text
+
+
 def _restore_code(text: str, held: list[str]) -> str:
     """Put code pieces back.
 
@@ -333,6 +368,9 @@ def _expand_prose(text: str, introduced: set[str], used: set[str]) -> str:
         Prose with the first mention of each new short name expanded.
     """
     masked, held = _hold_code(text)
+    masked, images = _hold_images(masked)
+    for image in images:
+        _scan(image, introduced, used)
 
     def repl(match: re.Match[str]) -> str:
         raw = match.group(1)
@@ -342,7 +380,7 @@ def _expand_prose(text: str, introduced: set[str], used: set[str]) -> str:
         _mark(introduced, used, raw)
         return _phrase(raw)
 
-    return _restore_code(_TOKEN_RE.sub(repl, masked), held)
+    return _restore_images(_restore_code(_TOKEN_RE.sub(repl, masked), held), images)
 
 
 def _scan(text: str, introduced: set[str], used: set[str]) -> None:
@@ -2635,9 +2673,188 @@ def _comparison_sections(run: ComparisonRun, baseline: BaselineRun | None, top_k
     return sections
 
 
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I | re.S)
+_TABLE_RE = re.compile(r"<table\b.*?</table>", re.I | re.S)
+_ATTR_RE = re.compile(r'([a-zA-Z_:][-a-zA-Z0-9:._]*)="([^"]*)"')
+_VERDICT_RE = re.compile(
+    r'<div class="verdict (\w+)">\s*<div class="verdict-label">.*?</div>\s*'
+    r'<div class="verdict-text">(.*?)</div>\s*<div class="verdict-rule">(.*?)</div>\s*</div>',
+    re.I | re.S,
+)
+_CALLOUT_RE = re.compile(r'<div class="callout[^"]*">(.*?)</div>', re.I | re.S)
+_DETAILS_RE = re.compile(r"<details>\s*<summary>(.*?)</summary>(.*?)</details>", re.I | re.S)
+
+
+def html_fragment_to_markdown(fragment: str, plot_dir: Path, plot_rel: str) -> str:
+    """Turn a report HTML fragment into markdown and write embedded PNGs.
+
+    Args:
+        fragment: HTML from one report section.
+        plot_dir: Directory for extracted PNG files.
+        plot_rel: Relative directory name used in markdown image links.
+
+    Returns:
+        Markdown for the fragment.
+
+    Raises:
+        TypeError: If an argument has the wrong type.
+        ValueError: If ``plot_rel`` is blank.
+    """
+    if not isinstance(fragment, str):
+        raise TypeError("fragment must be a string.")
+    if not isinstance(plot_dir, Path):
+        raise TypeError("plot_dir must be a Path.")
+    if not str(plot_rel).strip():
+        raise ValueError("plot_rel is empty.")
+    text = _replace_images(fragment, plot_dir, plot_rel.strip())
+    return _collapse_blank(_inline_markdown(_replace_blocks(text)))
+
+
+def write_report_files(
+        output_path: str | Path, title: str, subtitle: str, sections: Sequence[Section]) -> Path:
+    """Write the HTML report and a markdown copy with PNG plots.
+
+    Args:
+        output_path: Destination path. ``.html`` and ``.md`` siblings are both written.
+        title: Report title.
+        subtitle: One-line context under the title.
+        sections: Rendered report sections.
+
+    Returns:
+        The resolved destination path.
+
+    Raises:
+        ValueError: If ``output_path`` or ``title`` is blank.
+        TypeError: If ``subtitle`` is not a string.
+    """
+    if not str(output_path).strip():
+        raise ValueError("output_path is empty.")
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("title is empty.")
+    if not isinstance(subtitle, str):
+        raise TypeError("subtitle must be a string.")
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    html_path, md_path = path.with_suffix(".html"), path.with_suffix(".md")
+    html_path.write_text(render_page(title, subtitle, sections), encoding="utf-8")
+    md_path.write_text(_render_markdown(title, subtitle, sections, md_path), encoding="utf-8")
+    logger.info("Report written to %s and %s", html_path, md_path)
+    return path.resolve()
+
+
+def _render_markdown(title: str, subtitle: str, sections: Sequence[Section], md_path: Path) -> str:
+    """Assemble markdown from section HTML, extracting plots next to ``md_path``."""
+    plot_dir = md_path.parent / f"{md_path.stem}_plots"
+    parts = [f"# {title}\n\n{subtitle}\n"]
+    for section in sections:
+        parts.append(f"\n## {section.title}\n\n")
+        parts.append(html_fragment_to_markdown(section.body, plot_dir, plot_dir.name))
+        parts.append("\n")
+    return apply_acronyms_markdown("".join(parts))
+
+
+def _replace_images(html_text: str, plot_dir: Path, plot_rel: str) -> str:
+    """Write base64 PNGs to ``plot_dir`` and replace ``<img>`` tags with markdown links."""
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    index = _next_plot_index(plot_dir)
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal index
+        attrs = dict(_ATTR_RE.findall(match.group(0)))
+        src = attrs.get("src", "")
+        if not src.startswith("data:image/png;base64,"):
+            return ""
+        name = f"plot_{index:02d}.png"
+        (plot_dir / name).write_bytes(base64.b64decode(src.split(",", 1)[1]))
+        index += 1
+        return f"\n\n![{attrs.get('alt', 'plot')}]({plot_rel}/{name})\n\n"
+
+    return _IMG_TAG_RE.sub(repl, html_text)
+
+
+def _next_plot_index(plot_dir: Path) -> int:
+    """Return the next 1-based plot index that does not overwrite an existing PNG."""
+    found = []
+    for path in plot_dir.glob("plot_*.png"):
+        suffix = path.stem.split("_")[-1]
+        if suffix.isdigit():
+            found.append(int(suffix))
+    return max(found, default=0) + 1
+
+
+def _replace_blocks(text: str) -> str:
+    """Convert tables, verdicts, headings, lists, and callouts to markdown."""
+    text = _TABLE_RE.sub(lambda match: f"\n{_table_to_markdown(match.group(0))}\n", text)
+    text = _VERDICT_RE.sub(_verdict_md, text)
+    text = re.sub(r"<h3[^>]*>(.*?)</h3>", lambda m: f"\n### {_inline_markdown(m.group(1))}\n", text, flags=re.I | re.S)
+    text = re.sub(r"<li[^>]*>(.*?)</li>", lambda m: f"- {_inline_markdown(m.group(1))}\n", text, flags=re.I | re.S)
+    text = _DETAILS_RE.sub(_details_md, text)
+    text = _CALLOUT_RE.sub(_callout_md, text)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    return re.sub(r"</p>", "\n\n", text, flags=re.I)
+
+
+def _table_to_markdown(table_html: str) -> str:
+    """Convert one HTML table to a pipe table."""
+    rows = []
+    for row_html in re.findall(r"<tr\b[^>]*>(.*?)</tr>", table_html, flags=re.I | re.S):
+        cells = re.findall(r"<t[hd]\b[^>]*>(.*?)</t[hd]>", row_html, flags=re.I | re.S)
+        rows.append([_cell_text(cell) for cell in cells])
+    if not rows:
+        return ""
+    width = max(len(row) for row in rows)
+    padded = [row + [""] * (width - len(row)) for row in rows]
+    header, body = padded[0], padded[1:]
+    lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
+    lines.extend("| " + " | ".join(row) + " |" for row in body)
+    return "\n".join(lines) + "\n"
+
+
+def _cell_text(fragment: str) -> str:
+    """Plain table-cell text with pipes escaped."""
+    return " ".join(_inline_markdown(fragment).split()).replace("|", "\\|")
+
+
+def _verdict_md(match: re.Match[str]) -> str:
+    """Turn the HTML verdict banner into a blockquote."""
+    verdict = _inline_markdown(match.group(2)).strip()
+    rule = _inline_markdown(match.group(3)).strip()
+    return f"\n> **Verdict ({match.group(1)}):** {verdict}\n>\n> {rule}\n"
+
+
+def _details_md(match: re.Match[str]) -> str:
+    """Unfold a details block into bold summary plus body."""
+    summary = _inline_markdown(match.group(1)).strip()
+    body = _inline_markdown(match.group(2)).strip()
+    return f"\n**{summary}**\n\n{body}\n"
+
+
+def _callout_md(match: re.Match[str]) -> str:
+    """Turn a callout div into a markdown blockquote."""
+    inner = _inline_markdown(match.group(1)).strip()
+    quoted = "\n".join(f"> {line}" if line else ">" for line in inner.splitlines())
+    return f"\n{quoted}\n"
+
+
+def _inline_markdown(fragment: str) -> str:
+    """Convert inline HTML emphasis to markdown and drop remaining tags."""
+    fragment = re.sub(r'<span class="badge[^"]*">([^<]*)</span>', r"**\1**", fragment, flags=re.I)
+    fragment = re.sub(r"</?(?:b|strong)>", "**", fragment, flags=re.I)
+    fragment = re.sub(r"</?(?:i|em)>", "*", fragment, flags=re.I)
+    fragment = re.sub(r"<code>(.*?)</code>", r"`\1`", fragment, flags=re.I | re.S)
+    return html.unescape(_TAG_RE.sub("", fragment))
+
+
+def _collapse_blank(text: str) -> str:
+    """Trim trailing spaces and collapse runs of blank lines."""
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip() + "\n"
+
+
 def build_report(output_path: str | Path, comparison_dir: str | Path | None = None,
                  baseline_dir: str | Path | None = None, title: str | None = None, top_k: int = 6) -> Path:
-    """Build the HTML report.
+    """Build the HTML report and a markdown copy with PNG plots.
 
     Args:
         output_path: Destination HTML file.
@@ -2669,11 +2886,7 @@ def build_report(output_path: str | Path, comparison_dir: str | Path | None = No
         sections = baseline_only_sections(baseline)
         subtitle = f"Training population baseline · {baseline.metadata['created_at']}"
         title = title or "Population drift baseline report"
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(render_page(title, subtitle, sections), encoding="utf-8")
-    logger.info("Report written to %s", output_path)
-    return output_path
+    return write_report_files(output_path, title, subtitle, sections)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2683,7 +2896,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--comparison", help="Comparison output directory.")
     parser.add_argument("--baseline", help="Baseline directory (optional with --comparison).")
-    parser.add_argument("--out", required=True, help="Output HTML path.")
+    parser.add_argument(
+        "--out", required=True,
+        help="Output HTML path. A markdown copy with PNG plots is written beside it.",
+    )
     parser.add_argument("--title")
     parser.add_argument("--top-k", type=int, default=6, help="Features shown in distribution plots.")
     args = parser.parse_args(argv)

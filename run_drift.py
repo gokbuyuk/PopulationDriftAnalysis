@@ -56,7 +56,7 @@ class DriftRunSettings:
         model_path: Pickled LightGBM estimator (``.pkl``), or blank for feature-only checks.
         missing_sentinels: Comma-separated missing codes.
         output_dir: Comparison output directory.
-        report_path: HTML report path.
+        report_path: HTML report path. A markdown copy with PNG plots is written beside it.
         n_rounds: Baseline rounds. Must be >= 2.
         threshold: Operating cutoff for the predicted-positive rate.
         performance_tolerance: Absolute AUC drop (binary) or relative error increase.
