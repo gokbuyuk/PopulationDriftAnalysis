@@ -10,7 +10,14 @@ import lightgbm as lgb
 import pandas as pd
 import pytest
 
-from population_drift.analysis import load_model, predict_contributions, predict_scores
+from population_drift.analysis import (
+    _copy_warnings,
+    load_model,
+    load_model_or_skip,
+    main,
+    predict_contributions,
+    predict_scores,
+)
 
 
 def _fitted_classifier() -> tuple[lgb.LGBMClassifier, pd.DataFrame]:
@@ -70,3 +77,93 @@ def test_load_model_rejects_an_unknown_suffix(tmp_path: Path) -> None:
     path.write_bytes(b"not-a-model")
     with pytest.raises(ValueError, match="Unsupported model file"):
         load_model(path)
+
+
+def test_load_model_or_skip_returns_none_for_a_corrupt_pickle(tmp_path: Path) -> None:
+    """A set but unreadable pickle does not raise; the error is returned."""
+    path = tmp_path / "model.pkl"
+    path.write_bytes(b"not-a-pickle")
+    model, error = load_model_or_skip(path)
+    _check(model is None, True, "corrupt pickle yields no model")
+    assert error is not None, "corrupt pickle must return an error message."
+    _check("could not be loaded" in error, True, "error names a load failure")
+    _check("Feature-distribution tests will still run" in error, True, "error says feature tests continue")
+
+
+def test_load_model_or_skip_is_silent_when_no_path_is_set() -> None:
+    """A blank path is a deliberate feature-only run."""
+    model, error = load_model_or_skip("")
+    _check(model is None, True, "blank path yields no model")
+    _check(error is None, True, "blank path is not a load error")
+
+
+def test_copy_warnings_rejects_a_bare_string() -> None:
+    """A string is not treated as a sequence of one-character messages."""
+    with pytest.raises(TypeError, match="extra_warnings must be a sequence"):
+        _copy_warnings("not a list")
+
+
+def test_copy_warnings_returns_an_independent_list() -> None:
+    """The caller list is copied so later appends do not mutate the original."""
+    original = ["first"]
+    copied = _copy_warnings(original)
+    original.append("second")
+    _check(copied, ["first"], "copied warnings stay independent")
+
+
+def test_compare_cli_still_runs_when_the_model_cannot_be_loaded(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Feature comparison is invoked with model=None and a load warning."""
+    seen: dict[str, object] = {}
+
+    def fake_compare(*args: object, extra_warnings: list[str] | None = None, **kwargs: object) -> dict[str, str]:
+        seen["model"] = args[4]
+        seen["warnings"] = extra_warnings
+        return {"verdict_level": "mild"}
+
+    monkeypatch.setattr("population_drift.analysis.run_comparison", fake_compare)
+    train = tmp_path / "train.csv"
+    new = tmp_path / "new.csv"
+    pd.DataFrame({"x": [0.0, 1.0], "target": [0, 1]}).to_csv(train, index=False)
+    pd.DataFrame({"x": [0.5, 1.5]}).to_csv(new, index=False)
+    model_path = tmp_path / "model.pkl"
+    model_path.write_bytes(b"not-a-pickle")
+    code = main([
+        "compare", "--train", str(train), "--new", str(new), "--model", str(model_path),
+        "--out", str(tmp_path / "out"),
+    ])
+    _check(code, 0, "compare exit code after a model load failure")
+    _check(seen["model"] is None, True, "compare is called without a model")
+    warnings = seen["warnings"]
+    assert isinstance(warnings, list) and warnings, "load warning was not passed to compare."
+    _check("could not be loaded" in warnings[0], True, "compare receives the load warning")
+
+
+def test_paired_cli_still_runs_when_the_model_cannot_be_loaded(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A paired compare also drops the model and keeps the load warning."""
+    seen: dict[str, object] = {}
+
+    def fake_paired(*args: object, extra_warnings: list[str] | None = None, **kwargs: object) -> dict[str, str]:
+        seen["model"] = args[5]
+        seen["warnings"] = extra_warnings
+        return {"verdict_level": "mild"}
+
+    monkeypatch.setattr("population_drift.analysis.run_paired_comparison", fake_paired)
+    frame = pd.DataFrame({"x": [0.0, 1.0], "target": [0, 1]})
+    train = tmp_path / "train.csv"
+    test = tmp_path / "test.csv"
+    new = tmp_path / "new.csv"
+    frame.to_csv(train, index=False)
+    frame.to_csv(test, index=False)
+    frame[["x"]].to_csv(new, index=False)
+    model_path = tmp_path / "model.pkl"
+    model_path.write_bytes(b"not-a-pickle")
+    code = main([
+        "compare", "--train", str(train), "--test", str(test), "--new", str(new),
+        "--model", str(model_path), "--out", str(tmp_path / "out"),
+    ])
+    _check(code, 0, "paired compare exit code after a model load failure")
+    _check(seen["model"] is None, True, "paired compare is called without a model")
+    warnings = seen["warnings"]
+    assert isinstance(warnings, list) and warnings, "load warning was not passed to paired compare."

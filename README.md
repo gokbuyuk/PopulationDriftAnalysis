@@ -36,7 +36,7 @@ With `--test`, `--train` is the fit set and `--test` is the evaluation set:
 
 Each reference needs at least `n_new + 30` rows, and the new table needs at least 30. Use 30 rounds for a decision (the empirical p-value cannot be smaller than `1/(rounds + 1)`).
 
-CSV, Parquet, and Feather are accepted. Pass the fitted LightGBM estimator as a pickle with `--model` (`.pkl`, `.pickle`, or `.joblib`). Pass missing codes with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct training values is treated as categorical anyway, because the Kolmogorov–Smirnov (KS) statistic is not valid under heavy ties. Leave identifiers, the time column, and anything built from the label or the score out of the feature list.
+CSV, Parquet, and Feather are accepted. Pass the fitted LightGBM estimator as a pickle with `--model` (`.pkl`, `.pickle`, or `.joblib`). If that file cannot be loaded, feature-distribution tests still run and the load error is recorded on `decision.json` warnings; model-based tests are skipped. Pass missing codes with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct training values is treated as categorical anyway, because the Kolmogorov–Smirnov (KS) statistic is not valid under heavy ties. Leave identifiers, the time column, and anything built from the label or the score out of the feature list.
 
 ```bash
 python -m population_drift compare \
