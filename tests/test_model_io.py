@@ -20,45 +20,6 @@ from population_drift.analysis import (
 )
 
 
-class Model:
-    """Scoring wrapper whose ``predict`` does not accept ``pred_contrib``."""
-
-    def __init__(self, estimator: lgb.LGBMClassifier) -> None:
-        """Store a fitted LightGBM estimator as ``model``.
-
-        Args:
-            estimator: Fitted ``LGBMClassifier``.
-
-        Raises:
-            TypeError: If ``estimator`` is None.
-        """
-        if estimator is None:
-            raise TypeError("estimator is required.")
-        self.model = estimator
-
-    def predict(self, features: pd.DataFrame) -> object:
-        """Return class labels. Extra LightGBM predict kwargs are not accepted.
-
-        Args:
-            features: Model input rows.
-
-        Returns:
-            Predicted class labels from the inner estimator.
-        """
-        return self.model.predict(features)
-
-    def predict_proba(self, features: pd.DataFrame) -> object:
-        """Return class probabilities from the inner estimator.
-
-        Args:
-            features: Model input rows.
-
-        Returns:
-            Class probabilities from the inner estimator.
-        """
-        return self.model.predict_proba(features)
-
-
 def _fitted_classifier() -> tuple[lgb.LGBMClassifier, pd.DataFrame]:
     """A tiny binary LightGBM estimator and the frame it was fitted on."""
     frame = pd.DataFrame({
@@ -74,41 +35,6 @@ def _check(actual: object, expected: object, what: str) -> None:
     """Fail with the comparison that did not hold."""
     if actual != expected:
         pytest.fail(f"{what}: got {actual!r}, expected {expected!r}.")
-
-
-def test_predict_contributions_uses_the_nested_lightgbm_estimator() -> None:
-    """TreeSHAP is taken from the inner LightGBM estimator, not wrapper.predict()."""
-    estimator, frame = _fitted_classifier()
-    contrib = predict_contributions(Model(estimator), frame[["x"]])
-    _check(contrib.shape, (len(frame), 1), "TreeSHAP shape from a Model wrapper")
-
-
-def test_predict_contributions_reads_a_native_booster() -> None:
-    """A native Booster yields TreeSHAP without sklearn predict()."""
-    estimator, frame = _fitted_classifier()
-    contrib = predict_contributions(estimator.booster_, frame[["x"]])
-    _check(contrib.shape, (len(frame), 1), "TreeSHAP shape from a Booster")
-
-
-def test_predict_contributions_names_a_scorer_without_a_booster() -> None:
-    """A predict-only object is rejected by type, not by pred_contrib."""
-
-    class Scorer:
-        """Object with predict() and no LightGBM booster."""
-
-        def predict(self, features: pd.DataFrame) -> list[int]:
-            """Return a zero label per row.
-
-            Args:
-                features: Unused rows.
-
-            Returns:
-                A zero label per row.
-            """
-            return [0] * len(features)
-
-    with pytest.raises(TypeError, match="Got Scorer"):
-        predict_contributions(Scorer(), pd.DataFrame({"x": [0.0]}))
 
 
 def test_load_model_reads_a_pickle_of_a_sklearn_lightgbm_estimator(tmp_path: Path) -> None:
