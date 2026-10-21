@@ -113,6 +113,25 @@ def test_run_returns_2_when_a_required_file_is_missing(tmp_path: Path) -> None:
     _check(code, 2, "exit code for a missing train file")
 
 
+def test_run_still_invokes_compare_when_the_model_file_is_unreadable(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A set model path that exists is passed through; load errors are handled later."""
+    model = _write(tmp_path / "model.pkl", "not-a-pickle")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "decision.json").write_text(json.dumps({"verdict_level": "mild"}), encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake_main(argv: list[str]) -> int:
+        seen.append(argv)
+        return 0
+
+    monkeypatch.setattr("run_drift.run_compare", fake_main)
+    code = DriftRun(_settings(tmp_path, model_path=str(model), output_dir=str(out)), root=tmp_path).run()
+    _check(code, 0, "exit code when the model file exists but is unreadable")
+    _check("--model" in seen[0], True, "unreadable model is still passed to compare")
+
+
 def test_run_logs_the_verdict_when_the_comparison_succeeds(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A zero exit from the comparison logs verdict_level from decision.json."""

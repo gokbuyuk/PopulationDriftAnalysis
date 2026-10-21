@@ -1078,6 +1078,29 @@ def load_model(path: str | Path) -> Any:
     raise ValueError(f"Unsupported model file '{path.suffix}'. Use .pkl/.pickle/.joblib or .txt/.model.")
 
 
+def load_model_or_skip(path: str | Path | None) -> tuple[Any | None, str | None]:
+    """Load a model if a path is set. A load failure skips the model instead of aborting.
+
+    Args:
+        path: Model file, or blank/None to run without a model.
+
+    Returns:
+        ``(model, None)`` on success, ``(None, None)`` when no path is set,
+        ``(None, error)`` when ``path`` is set but the file cannot be loaded.
+    """
+    if path is None or not str(path).strip():
+        return None, None
+    try:
+        return load_model(path), None
+    except Exception as exc:  # noqa: BLE001 - a bad model must not abort feature tests
+        message = (
+            f"Model file {path} could not be loaded ({type(exc).__name__}: {exc}). "
+            "Feature-distribution tests will still run; model-based tests are skipped."
+        )
+        logger.error("%s", message)
+        return None, message
+
+
 def _load_pickle(path: Path) -> Any:
     """Unpickle a LightGBM estimator from ``.pkl``.
 
@@ -2149,14 +2172,34 @@ def _attach_pairs(signals: list[dict[str, Any]], task_pairs: dict[str, str]) -> 
 # --------------------------------------------------------------------------------------
 # Comparison pipeline and console output
 # --------------------------------------------------------------------------------------
+def _copy_warnings(extra_warnings: Sequence[str] | None) -> list[str]:
+    """Copy caller-supplied warnings, or return an empty list.
+
+    Args:
+        extra_warnings: Messages to include on the decision, or None.
+
+    Returns:
+        A new list of warning strings.
+
+    Raises:
+        TypeError: If ``extra_warnings`` is a string or not a sequence.
+    """
+    if extra_warnings is None:
+        return []
+    if isinstance(extra_warnings, str) or not isinstance(extra_warnings, Sequence):
+        raise TypeError("extra_warnings must be a sequence of strings.")
+    return [str(item) for item in extra_warnings]
+
+
 def run_comparison(source: pd.DataFrame, target: pd.DataFrame, feature_cols: Sequence[str],
                    categorical_cols: Sequence[str] | None = None, model: Any | None = None,
                    label_col: str | None = None, config: DriftConfig | None = None,
                    baseline_dir: str | Path | None = None, output_dir: str | Path = "drift_runs/comparison",
-                   n_baseline_rounds: int = 30) -> dict[str, Any]:
+                   n_baseline_rounds: int = 30, extra_warnings: Sequence[str] | None = None) -> dict[str, Any]:
     """Full analysis of training vs new population, positioned against the baseline null.
 
     If ``baseline_dir`` is None a size-matched baseline is built and saved to ``output_dir/baseline``.
+    ``extra_warnings`` is copied onto the decision; the CLI uses this when a model file cannot be loaded.
 
     Returns:
         Decision dictionary (also written to ``decision.json``).
@@ -2167,7 +2210,7 @@ def run_comparison(source: pd.DataFrame, target: pd.DataFrame, feature_cols: Seq
     config = config or DriftConfig()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_warnings = []
+    run_warnings = _copy_warnings(extra_warnings)
     if baseline_dir is not None:
         baseline = load_baseline(baseline_dir)
         baseline_features = set(baseline.metadata["feature_cols"])
@@ -2237,7 +2280,7 @@ def run_paired_comparison(fit_set: pd.DataFrame, evaluation: pd.DataFrame, new: 
                           feature_cols: Sequence[str], categorical_cols: Sequence[str] | None = None,
                           model: Any | None = None, label_col: str | None = None,
                           config: DriftConfig | None = None, output_dir: str | Path = "drift_runs/comparison",
-                          n_baseline_rounds: int = 30) -> dict[str, Any]:
+                          n_baseline_rounds: int = 30, extra_warnings: Sequence[str] | None = None) -> dict[str, Any]:
     """Compare the new population with a fit set and an evaluation set.
 
     Feature, joint, and support tests use the fit set. Score, attribution, and
@@ -2255,6 +2298,7 @@ def run_paired_comparison(fit_set: pd.DataFrame, evaluation: pd.DataFrame, new: 
         config: Run configuration.
         output_dir: Directory for the merged comparison and the baseline.
         n_baseline_rounds: Rounds in each reference's baseline.
+        extra_warnings: Messages copied onto the decision (for example a model load error).
 
     Returns:
         Decision dictionary. Each signal has a ``pair`` field.
@@ -2269,7 +2313,7 @@ def run_paired_comparison(fit_set: pd.DataFrame, evaluation: pd.DataFrame, new: 
     baseline = _paired_baseline(fit_set, evaluation, new, feature_cols, categorical_cols, model, label_col,
                                 config, n_baseline_rounds, baseline_dir)
     result = _paired_analysis(fit_set, evaluation, new, feature_cols, categorical_cols, model, label_col, config)
-    return _emit_decision(result, baseline, baseline_dir, output_dir, config, [])
+    return _emit_decision(result, baseline, baseline_dir, output_dir, config, _copy_warnings(extra_warnings))
 
 
 def _validate_paired(fit_set: pd.DataFrame, evaluation: pd.DataFrame, new: pd.DataFrame,
@@ -2434,7 +2478,11 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--exclude", help="Columns to exclude when no feature list is given (IDs, dates).")
     common.add_argument("--categorical", help="Comma-separated categorical feature columns.")
     common.add_argument("--label-col", help="Label column in the training population (optional).")
-    common.add_argument("--model", help="Pickled LightGBM estimator (.pkl/.pickle/.joblib) or Booster .txt (optional).")
+    common.add_argument(
+        "--model",
+        help="Pickled LightGBM estimator (.pkl/.pickle/.joblib) or Booster .txt. "
+             "If the file cannot be loaded, feature-distribution tests still run.",
+    )
     common.add_argument("--problem-type", choices=["binary", "regression"], default="binary")
     common.add_argument("--threshold", type=float, default=0.5, help="Decision threshold for binary models.")
     common.add_argument("--missing-sentinels", help="Comma-separated codes to treat as missing, e.g. -999.")
@@ -2476,7 +2524,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     target = load_table(args.new, sentinels) if args.command == "compare" else None
     features = resolve_features(args, source, target)
     categorical = _split_list(args.categorical) or None
-    model = load_model(args.model) if args.model else None
+    model, model_error = load_model_or_skip(args.model)
     config_kwargs = {"problem_type": args.problem_type, "decision_threshold": args.threshold, "seed": args.seed,
                      "n_jobs": args.n_jobs}
     if args.command == "compare":
@@ -2493,24 +2541,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             from population_drift.report import build_report
             build_report(args.report, baseline_dir=args.out)
     else:
-        return _run_compare_command(args, source, target, features, categorical, model, config, sentinels)
+        return _run_compare_command(args, source, target, features, categorical, model, config, sentinels,
+                                   model_error)
     return 0
 
 
 def _run_compare_command(args: argparse.Namespace, source: pd.DataFrame, target: pd.DataFrame, features: list[str],
                          categorical: list[str] | None, model: Any | None, config: DriftConfig,
-                         sentinels: list[Any]) -> int:
+                         sentinels: list[Any], model_error: str | None = None) -> int:
     """Compare the new population with the labelled set, or with the fit and evaluation sets."""
+    run_warnings = [model_error] if model_error else []
     if args.test:
         if args.baseline:
             logger.error("A supplied evaluation set builds one baseline per reference. Omit --baseline.")
             return 2
         evaluation = load_table(args.test, sentinels)
         run_paired_comparison(source, evaluation, target, features, categorical, model, args.label_col, config,
-                              args.out, args.n_rounds)
+                              args.out, args.n_rounds, extra_warnings=run_warnings)
     else:
         run_comparison(source, target, features, categorical, model, args.label_col, config, args.baseline,
-                       args.out, args.n_rounds)
+                       args.out, args.n_rounds, extra_warnings=run_warnings)
     if args.report:
         from population_drift.report import build_report
         build_report(args.report, comparison_dir=args.out)

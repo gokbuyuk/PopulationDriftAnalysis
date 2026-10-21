@@ -36,7 +36,7 @@ This null is sampling noise under exchangeability inside that reference. Exchang
 
 Benjamini–Hochberg (BH) adjustment is applied inside a test family, across features, at α = 0.05 (`DriftConfig.alpha`, `correction_method`). It is not applied across the signal list.
 
-A feature is severe only when three conditions hold: the test is significant after that adjustment, the statistic exceeds its baseline 95th percentile, and the effect is large. A moderate level uses the same significance and baseline conditions with a moderate effect. Otherwise the feature is mild. The feature’s level is the worse of its distribution level and its missingness level. Without a model, every feature is treated as important.
+A feature is severe only when three conditions hold: the test is significant after that adjustment, the statistic exceeds its baseline 95th percentile, and the effect is large. A moderate level uses the same significance and baseline conditions with a moderate effect. Otherwise the feature is mild. The feature’s level is the worse of its distribution level and its missingness level. Without a model, every feature is treated as important. If `--model` is set but the file cannot be loaded, the run continues as that feature-only comparison and records the load error on `decision.json` warnings.
 
 | Type | Significant | Beyond baseline on | Large | Moderate |
 |---|---|---|---|---|
