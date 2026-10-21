@@ -1127,9 +1127,34 @@ def _load_pickle(path: Path) -> Any:
             ) from joblib_error
 
 
+def _lightgbm_booster(model: Any) -> lgb.Booster | None:
+    """Return the LightGBM Booster used for feature names and TreeSHAP.
+
+    Accepts a native Booster, a sklearn LightGBM estimator (``booster_``), or a
+    scoring wrapper that stores one of those as ``.model``.
+
+    Args:
+        model: Fitted model or wrapper.
+
+    Returns:
+        The Booster, or None if none is found.
+    """
+    current = model
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, lgb.Booster):
+            return current
+        booster = getattr(current, "booster_", None)
+        if isinstance(booster, lgb.Booster):
+            return booster
+        current = getattr(current, "model", None)
+    return None
+
+
 def model_feature_names(model: Any) -> list[str] | None:
     """Feature names stored in a LightGBM Booster or sklearn LightGBM estimator, if any."""
-    booster = model if isinstance(model, lgb.Booster) else getattr(model, "booster_", None)
+    booster = _lightgbm_booster(model)
     return list(booster.feature_name()) if booster is not None else None
 
 
@@ -1181,8 +1206,30 @@ def predict_scores(model: Any, features: pd.DataFrame, problem_type: str) -> np.
 
 
 def predict_contributions(model: Any, features: pd.DataFrame) -> np.ndarray:
-    """TreeSHAP contributions from LightGBM (``pred_contrib=True``), without the expected-value column."""
-    output = np.asarray(model.predict(features, pred_contrib=True))
+    """TreeSHAP contributions from LightGBM (``pred_contrib=True``), without the expected-value column.
+
+    Args:
+        model: LightGBM Booster, sklearn estimator, or wrapper with ``.model`` / ``.booster_``.
+        features: Rows in the model's feature order.
+
+    Returns:
+        Array of shape ``(n_rows, n_features)``.
+
+    Raises:
+        TypeError: If ``model`` is missing, ``features`` is not a DataFrame, or no Booster is found.
+        ValueError: If the contribution matrix is not binary/regression TreeSHAP.
+    """
+    if model is None:
+        raise TypeError("model is required.")
+    if not isinstance(features, pd.DataFrame):
+        raise TypeError(f"features must be a pandas DataFrame, got {type(features).__name__}.")
+    booster = _lightgbm_booster(model)
+    if booster is None:
+        raise TypeError(
+            "TreeSHAP requires a LightGBM Booster or sklearn estimator with booster_. "
+            f"Got {type(model).__name__}."
+        )
+    output = np.asarray(booster.predict(features, pred_contrib=True))
     if output.ndim != 2 or output.shape[1] != features.shape[1] + 1:
         raise ValueError("SHAP contributions are only supported for binary classification and regression.")
     return output[:, :-1]
