@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -101,6 +102,134 @@ class DriftRunSettings:
             raise ValueError("performance_tolerance must be a number.")
         if self.performance_tolerance < 0:
             raise ValueError("performance_tolerance must be >= 0.")
+
+
+@dataclass(frozen=True)
+class ReportPart:
+    """One notebook output: markdown text or an image file path.
+
+    Args:
+        kind: ``markdown`` or ``image``.
+        payload: Markdown fragment, or an absolute PNG path.
+    """
+
+    kind: str
+    payload: str
+
+    def __post_init__(self) -> None:
+        """Reject unknown kinds or blank payloads.
+
+        Raises:
+            ValueError: If ``kind`` is not allowed or ``payload`` is blank.
+            TypeError: If a field is not a string.
+        """
+        if not isinstance(self.kind, str) or not isinstance(self.payload, str):
+            raise TypeError("kind and payload must be strings.")
+        if self.kind not in {"markdown", "image"}:
+            raise ValueError("kind must be 'markdown' or 'image'.")
+        if not self.payload.strip():
+            raise ValueError("payload is empty.")
+
+
+class NotebookReport:
+    """Split a written markdown report into notebook display parts."""
+
+    _IMAGE_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+
+    def __init__(self, report_path: str | Path) -> None:
+        """Load the markdown sibling of ``report_path``.
+
+        Args:
+            report_path: HTML or markdown report path.
+
+        Raises:
+            TypeError: If ``report_path`` is not a string or Path.
+            ValueError: If ``report_path`` is blank or the markdown is empty.
+            FileNotFoundError: If the markdown file is missing.
+        """
+        self.md_path = self._resolve_markdown(report_path)
+        self._text = self.md_path.read_text(encoding="utf-8")
+        if not self._text.strip():
+            raise ValueError(f"Markdown report is empty: {self.md_path}")
+
+    def parts(self) -> list[ReportPart]:
+        """Return markdown fragments and plot files in document order.
+
+        Returns:
+            Display parts covering interpretations, tables, and plots.
+
+        Raises:
+            FileNotFoundError: If a markdown image does not exist on disk.
+        """
+        parts: list[ReportPart] = []
+        cursor = 0
+        for match in self._IMAGE_RE.finditer(self._text):
+            self._append_markdown(parts, self._text[cursor:match.start()])
+            parts.append(self._image_part(match.group(1)))
+            cursor = match.end()
+        self._append_markdown(parts, self._text[cursor:])
+        logger.info("Notebook report has %s parts from %s", len(parts), self.md_path)
+        return parts
+
+    @staticmethod
+    def _resolve_markdown(report_path: str | Path) -> Path:
+        """Resolve ``report_path`` to an existing ``.md`` file.
+
+        Args:
+            report_path: HTML or markdown report path.
+
+        Returns:
+            Absolute path of the markdown report.
+
+        Raises:
+            TypeError: If ``report_path`` is not a string or Path.
+            ValueError: If ``report_path`` is blank.
+            FileNotFoundError: If the markdown file is missing.
+        """
+        if not isinstance(report_path, (str, Path)):
+            raise TypeError("report_path must be a string or Path.")
+        if not str(report_path).strip():
+            raise ValueError("report_path is empty.")
+        md_path = Path(report_path).expanduser().with_suffix(".md")
+        if not md_path.is_file():
+            raise FileNotFoundError(f"Markdown report is not a file: {md_path}")
+        return md_path.resolve()
+
+    @staticmethod
+    def _append_markdown(parts: list[ReportPart], fragment: str) -> None:
+        """Append a non-blank markdown fragment.
+
+        Args:
+            parts: Accumulator of display parts.
+            fragment: Text between plots, including tables and interpretations.
+        """
+        text = fragment.strip()
+        if text:
+            parts.append(ReportPart("markdown", text))
+
+    def _image_part(self, raw: str) -> ReportPart:
+        """Resolve one markdown image destination to an existing PNG.
+
+        Args:
+            raw: Contents of the markdown image parentheses.
+
+        Returns:
+            An image part whose payload is the absolute PNG path.
+
+        Raises:
+            ValueError: If the image markup has no path.
+            FileNotFoundError: If the PNG is missing.
+        """
+        token = raw.strip().split()[0] if raw.strip() else ""
+        if not token:
+            raise ValueError("markdown image is missing a path.")
+        path = Path(token)
+        if not path.is_absolute():
+            path = self.md_path.parent / path
+        path = path.resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"plot is not a file: {path}")
+        return ReportPart("image", str(path))
 
 
 class DriftRun:
