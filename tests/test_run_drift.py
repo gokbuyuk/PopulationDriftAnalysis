@@ -7,7 +7,21 @@ from pathlib import Path
 
 import pytest
 
-from run_drift import MODEL_PATH, DriftRun, DriftRunSettings, ROOT, set_working_directory
+from population_drift.report import Section, write_report_files
+from run_drift import (
+    MODEL_PATH,
+    DriftRun,
+    DriftRunSettings,
+    NotebookReport,
+    ROOT,
+    set_working_directory,
+)
+
+# 1x1 PNG. Source: W3C PNG test suite, 1x1 red pixel.
+_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ"
+    "AAAABJRU5ErkJggg=="
+)
 
 
 def _write(path: Path, text: str = "x") -> Path:
@@ -179,3 +193,95 @@ def test_default_model_path_is_a_pickle_file() -> None:
     """The runner expects a pickled LightGBM estimator."""
     _check(Path(MODEL_PATH).suffix, ".pkl", "MODEL_PATH suffix")
     _check(MODEL_PATH, "demo_data/model.pkl", "default MODEL_PATH")
+
+
+def _write_markdown_report(tmp_path: Path) -> Path:
+    """Write a markdown report with one plot, a table, and interpretation text."""
+    plots = tmp_path / "report_plots"
+    plots.mkdir()
+    (plots / "plot_01.png").write_bytes(b"\x89PNG\r\n")
+    md_path = tmp_path / "report.md"
+    md_path.write_text(
+        "# Population drift report\n\n"
+        "Score PSI shows a location shift.\n\n"
+        "![Score PSI](report_plots/plot_01.png)\n\n"
+        "| Level | Signal |\n| --- | --- |\n| **severe** | Feature drift |\n\n"
+        "Do not use the model as is.\n",
+        encoding="utf-8",
+    )
+    return md_path
+
+
+def test_notebook_report_splits_plots_tables_and_interpretations(tmp_path: Path) -> None:
+    """Markdown between image tags stays text; PNG paths become image parts."""
+    parts = NotebookReport(_write_markdown_report(tmp_path)).parts()
+    _check(len(parts), 3, "part count")
+    _check(parts[0].kind, "markdown", "opening interpretation")
+    _check("Score PSI shows a location shift." in parts[0].payload, True, "interpretation text")
+    _check("| Level | Signal |" in parts[2].payload, True, "table remains markdown")
+    _check("Do not use the model as is." in parts[2].payload, True, "closing interpretation")
+    _check(parts[1].kind, "image", "plot part")
+    _check(parts[1].payload, str((tmp_path / "report_plots" / "plot_01.png").resolve()), "plot path")
+
+
+def test_notebook_report_accepts_an_html_report_path(tmp_path: Path) -> None:
+    """The HTML destination from settings resolves to the markdown sibling."""
+    _write_markdown_report(tmp_path)
+    parts = NotebookReport(tmp_path / "report.html").parts()
+    _check(parts[1].kind, "image", "plot from html path")
+
+
+def test_notebook_report_reads_generated_report_files(tmp_path: Path) -> None:
+    """Parts come from the markdown the report writer actually emits."""
+    fragment = (
+        "<p>Score PSI shows a location shift.</p>"
+        f'<img class="plot" alt="Score PSI" src="data:image/png;base64,{_PNG}">'
+        "<table><thead><tr><th>Level</th><th>Signal</th></tr></thead>"
+        "<tbody><tr><td>severe</td><td>Feature drift</td></tr></tbody></table>"
+        "<p>Do not use the model as is.</p>"
+    )
+    write_report_files(
+        tmp_path / "report.html",
+        "Title",
+        "Subtitle",
+        [Section("summary", "Executive summary", fragment)],
+    )
+    parts = NotebookReport(tmp_path / "report.html").parts()
+    markdown = "\n".join(part.payload for part in parts if part.kind == "markdown")
+    images = [part for part in parts if part.kind == "image"]
+    _check(len(images), 1, "generated plot count")
+    _check(Path(images[0].payload).is_file(), True, "generated plot exists")
+    _check("Score PSI shows a location shift." in markdown, True, "interpretation")
+    _check("| Level | Signal |" in markdown, True, "table")
+    _check("Do not use the model as is." in markdown, True, "closing interpretation")
+
+
+def test_notebook_report_rejects_a_missing_markdown_file(tmp_path: Path) -> None:
+    """A report path with no markdown sibling is invalid."""
+    with pytest.raises(FileNotFoundError, match="Markdown report is not a file"):
+        NotebookReport(tmp_path / "report.html")
+
+
+def test_notebook_report_rejects_a_missing_plot_file(tmp_path: Path) -> None:
+    """A markdown image whose PNG is absent fails instead of skipping the plot."""
+    md_path = tmp_path / "report.md"
+    md_path.write_text("Intro.\n\n![Missing](report_plots/gone.png)\n", encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="plot is not a file"):
+        NotebookReport(md_path).parts()
+
+
+def test_notebook_report_rejects_an_empty_path() -> None:
+    """A blank report path is invalid."""
+    with pytest.raises(ValueError, match="report_path"):
+        NotebookReport("")
+
+
+def test_notebook_displays_report_plots_tables_and_interpretations() -> None:
+    """The notebook renders the markdown report instead of only printing paths."""
+    notebook = json.loads((ROOT / "run_drift.ipynb").read_text(encoding="utf-8"))
+    joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+    _check("from IPython.display import Image, Markdown, display" in joined, True, "IPython display")
+    _check("NotebookReport(" in joined, True, "NotebookReport constructed")
+    _check("display(Markdown(part.payload))" in joined, True, "markdown tables and interpretations")
+    _check("display(Image(filename=part.payload))" in joined, True, "plots displayed")
+    _check("for part in report.parts()" in joined, True, "each report part is shown")
