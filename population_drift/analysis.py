@@ -1127,10 +1127,101 @@ def _load_pickle(path: Path) -> Any:
             ) from joblib_error
 
 
+def _lightgbm_booster(model: Any) -> lgb.Booster | None:
+    """Return the LightGBM Booster used for TreeSHAP.
+
+    Walks a native Booster, sklearn ``booster_``, and a nested ``.model`` wrapper.
+    Column alignment still uses ``model_feature_names``, which does not unwrap.
+
+    Args:
+        model: Fitted model or wrapper.
+
+    Returns:
+        The Booster, or None if none is found.
+    """
+    current = model
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, lgb.Booster):
+            return current
+        booster = getattr(current, "booster_", None)
+        if isinstance(booster, lgb.Booster):
+            return booster
+        current = getattr(current, "model", None)
+    return None
+
+
 def model_feature_names(model: Any) -> list[str] | None:
-    """Feature names stored in a LightGBM Booster or sklearn LightGBM estimator, if any."""
+    """Feature names stored on the top-level LightGBM Booster or sklearn estimator, if any."""
     booster = model if isinstance(model, lgb.Booster) else getattr(model, "booster_", None)
     return list(booster.feature_name()) if booster is not None else None
+
+
+def stored_predictor_names(model: Any) -> list[str] | None:
+    """Predictor names stored on the model or a nested ``.model`` wrapper, if any.
+
+    For display. Scoring still aligns columns with ``model_feature_names``.
+
+    Args:
+        model: Fitted model or wrapper.
+
+    Returns:
+        Predictor names, or None if none are stored.
+
+    Raises:
+        TypeError: If ``model`` is None.
+    """
+    if model is None:
+        raise TypeError("model is required.")
+    booster = _lightgbm_booster(model)
+    if booster is not None:
+        return list(booster.feature_name())
+    names = getattr(model, "feature_names_in_", None)
+    if names is not None:
+        return [str(name) for name in names]
+    return None
+
+
+def print_model_predictors(model: Any, feature_cols: Sequence[str] | None = None) -> None:
+    """Print the model's predictor names and the comparison feature list.
+
+    Args:
+        model: Fitted model or wrapper.
+        feature_cols: Feature list used for the comparison, if already resolved.
+
+    Raises:
+        TypeError: If ``model`` is None.
+    """
+    if model is None:
+        raise TypeError("model is required.")
+    type_name = f"{type(model).__module__}.{type(model).__qualname__}"
+    lines = [
+        f"Model type: {type_name}",
+        _format_name_list("Model predictors", stored_predictor_names(model)),
+    ]
+    if feature_cols is not None:
+        lines.append(_format_name_list("Comparison feature list", list(feature_cols)))
+    text = "\n".join(lines)
+    print(text, flush=True)
+    logger.info("%s", text)
+
+
+def _format_name_list(label: str, names: Sequence[str] | None) -> str:
+    """One labelled line of names, or an explicit empty/missing marker.
+
+    Args:
+        label: Line prefix.
+        names: Names to show, or None if the model stored none.
+
+    Returns:
+        A single display line.
+    """
+    if names is None:
+        return f"{label}: (none stored on the model)"
+    if len(names) == 0:
+        return f"{label}: (empty)"
+    return f"{label} ({len(names)}): {', '.join(str(name) for name in names)}"
 
 
 def prepare_model_input(df: pd.DataFrame, model: Any, feature_cols: Sequence[str]) -> pd.DataFrame:
@@ -1181,8 +1272,33 @@ def predict_scores(model: Any, features: pd.DataFrame, problem_type: str) -> np.
 
 
 def predict_contributions(model: Any, features: pd.DataFrame) -> np.ndarray:
-    """TreeSHAP contributions from LightGBM (``pred_contrib=True``), without the expected-value column."""
-    output = np.asarray(model.predict(features, pred_contrib=True))
+    """TreeSHAP contributions from LightGBM (``pred_contrib=True``), without the expected-value column.
+
+    Uses the inner Booster so scoring wrappers whose ``predict`` rejects ``pred_contrib``
+    still produce SHAP. Does not change which columns ``prepare_model_input`` selects.
+
+    Args:
+        model: LightGBM Booster, sklearn estimator, or wrapper with ``.model`` / ``.booster_``.
+        features: Rows already aligned by ``prepare_model_input``.
+
+    Returns:
+        Array of shape ``(n_rows, n_features)``.
+
+    Raises:
+        TypeError: If ``model`` is missing, ``features`` is not a DataFrame, or no Booster is found.
+        ValueError: If the contribution matrix is not binary/regression TreeSHAP.
+    """
+    if model is None:
+        raise TypeError("model is required.")
+    if not isinstance(features, pd.DataFrame):
+        raise TypeError(f"features must be a pandas DataFrame, got {type(features).__name__}.")
+    booster = _lightgbm_booster(model)
+    if booster is None:
+        raise TypeError(
+            "TreeSHAP requires a LightGBM Booster or sklearn estimator with booster_. "
+            f"Got {type(model).__name__}."
+        )
+    output = np.asarray(booster.predict(features, pred_contrib=True))
     if output.ndim != 2 or output.shape[1] != features.shape[1] + 1:
         raise ValueError("SHAP contributions are only supported for binary classification and regression.")
     return output[:, :-1]
@@ -2525,6 +2641,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     features = resolve_features(args, source, target)
     categorical = _split_list(args.categorical) or None
     model, model_error = load_model_or_skip(args.model)
+    if model is not None:
+        print_model_predictors(model, features)
     config_kwargs = {"problem_type": args.problem_type, "decision_threshold": args.threshold, "seed": args.seed,
                      "n_jobs": args.n_jobs}
     if args.command == "compare":

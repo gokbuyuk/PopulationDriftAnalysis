@@ -17,7 +17,48 @@ from population_drift.analysis import (
     main,
     predict_contributions,
     predict_scores,
+    prepare_model_input,
+    print_model_predictors,
 )
+
+
+class Model:
+    """Scoring wrapper whose ``predict`` does not accept ``pred_contrib``."""
+
+    def __init__(self, estimator: lgb.LGBMClassifier) -> None:
+        """Store a fitted LightGBM estimator as ``model``.
+
+        Args:
+            estimator: Fitted ``LGBMClassifier``.
+
+        Raises:
+            TypeError: If ``estimator`` is None.
+        """
+        if estimator is None:
+            raise TypeError("estimator is required.")
+        self.model = estimator
+
+    def predict(self, features: pd.DataFrame) -> object:
+        """Return class labels. Extra LightGBM predict kwargs are not accepted.
+
+        Args:
+            features: Model input rows.
+
+        Returns:
+            Predicted class labels from the inner estimator.
+        """
+        return self.model.predict(features)
+
+    def predict_proba(self, features: pd.DataFrame) -> object:
+        """Return class probabilities from the inner estimator.
+
+        Args:
+            features: Model input rows.
+
+        Returns:
+            Class probabilities from the inner estimator.
+        """
+        return self.model.predict_proba(features)
 
 
 def _fitted_classifier() -> tuple[lgb.LGBMClassifier, pd.DataFrame]:
@@ -35,6 +76,41 @@ def _check(actual: object, expected: object, what: str) -> None:
     """Fail with the comparison that did not hold."""
     if actual != expected:
         pytest.fail(f"{what}: got {actual!r}, expected {expected!r}.")
+
+
+def test_print_model_predictors_lists_booster_names(capsys: pytest.CaptureFixture[str]) -> None:
+    """Stdout shows the model class and the booster predictor names."""
+    estimator, _frame = _fitted_classifier()
+    print_model_predictors(estimator, ["x"])
+    out = capsys.readouterr().out
+    _check("LGBMClassifier" in out, True, "printed model type")
+    _check("x" in out, True, "printed booster predictor name")
+    _check("Comparison feature list" in out, True, "printed comparison feature list")
+
+
+def test_print_model_predictors_lists_nested_wrapper_names(capsys: pytest.CaptureFixture[str]) -> None:
+    """A Model wrapper still prints the inner LightGBM predictor names."""
+    estimator, _frame = _fitted_classifier()
+    print_model_predictors(Model(estimator), ["z"])
+    out = capsys.readouterr().out
+    _check("test_model_io.Model" in out, True, "printed wrapper type")
+    _check("x" in out, True, "printed inner booster predictor name")
+    _check("z" in out, True, "printed comparison feature list name")
+
+
+def test_prepare_model_input_does_not_require_inner_booster_names() -> None:
+    """A wrapper without booster_ keeps the comparison feature list for column alignment."""
+    estimator, frame = _fitted_classifier()
+    table = pd.DataFrame({"z": frame["x"].to_numpy()})
+    prepared = prepare_model_input(table, Model(estimator), ["z"])
+    _check(list(prepared.columns), ["z"], "wrapper alignment uses the feature list")
+
+
+def test_predict_contributions_uses_the_nested_lightgbm_estimator() -> None:
+    """TreeSHAP is taken from the inner LightGBM estimator, not wrapper.predict()."""
+    estimator, frame = _fitted_classifier()
+    contrib = predict_contributions(Model(estimator), frame[["x"]])
+    _check(contrib.shape, (len(frame), 1), "TreeSHAP shape from a Model wrapper")
 
 
 def test_load_model_reads_a_pickle_of_a_sklearn_lightgbm_estimator(tmp_path: Path) -> None:
@@ -109,6 +185,31 @@ def test_copy_warnings_returns_an_independent_list() -> None:
     copied = _copy_warnings(original)
     original.append("second")
     _check(copied, ["first"], "copied warnings stay independent")
+
+
+def test_compare_cli_prints_model_predictors(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """The compare CLI prints booster predictor names before the analysis runs."""
+    monkeypatch.setattr(
+        "population_drift.analysis.run_comparison",
+        lambda *args, **kwargs: {"verdict_level": "mild"},
+    )
+    estimator, frame = _fitted_classifier()
+    train = tmp_path / "train.csv"
+    new = tmp_path / "new.csv"
+    frame.to_csv(train, index=False)
+    frame[["x"]].to_csv(new, index=False)
+    model_path = tmp_path / "model.pkl"
+    with model_path.open("wb") as handle:
+        pickle.dump(estimator, handle)
+    code = main([
+        "compare", "--train", str(train), "--new", str(new), "--model", str(model_path),
+        "--out", str(tmp_path / "out"),
+    ])
+    _check(code, 0, "compare exit code when printing predictors")
+    out = capsys.readouterr().out
+    _check("Model predictors" in out, True, "CLI printed model predictors")
+    _check("x" in out, True, "CLI printed predictor name x")
 
 
 def test_compare_cli_still_runs_when_the_model_cannot_be_loaded(
