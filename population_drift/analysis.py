@@ -40,6 +40,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import scipy
+import shap
 import sklearn
 from scipy import stats
 from scipy.spatial.distance import cdist, jensenshannon
@@ -1128,7 +1129,7 @@ def _load_pickle(path: Path) -> Any:
 
 
 def _lightgbm_booster(model: Any) -> lgb.Booster | None:
-    """Return the LightGBM Booster used for feature names and TreeSHAP.
+    """Return the LightGBM Booster used for feature names.
 
     Accepts a native Booster, a sklearn LightGBM estimator (``booster_``), or a
     scoring wrapper that stores one of those as ``.model``.
@@ -1150,6 +1151,59 @@ def _lightgbm_booster(model: Any) -> lgb.Booster | None:
             return booster
         current = getattr(current, "model", None)
     return None
+
+
+def _lightgbm_tree_model(model: Any) -> Any:
+    """Return a LightGBM estimator or Booster for ``shap.TreeExplainer``.
+
+    Prefers the sklearn estimator so TreeExplainer sees the problem type.
+    Walks ``.model`` the same way as :func:`_lightgbm_booster`.
+
+    Args:
+        model: Fitted model or wrapper.
+
+    Returns:
+        ``LGBMModel`` or ``Booster``, or None if none is found.
+    """
+    current = model
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (lgb.LGBMModel, lgb.Booster)):
+            return current
+        current = getattr(current, "model", None)
+    booster = _lightgbm_booster(model)
+    return booster
+
+
+def _shap_feature_matrix(values: object, n_rows: int, n_features: int) -> np.ndarray:
+    """Normalize ``TreeExplainer.shap_values`` to shape ``(n_rows, n_features)``.
+
+    Args:
+        values: Array, class-list, or 3-D class stack from TreeExplainer.
+        n_rows: Expected row count.
+        n_features: Expected feature count.
+
+    Returns:
+        Contribution matrix without a bias column.
+
+    Raises:
+        ValueError: If the shape is not binary/regression TreeSHAP.
+    """
+    if n_rows < 0 or n_features < 0:
+        raise ValueError("n_rows and n_features must be >= 0.")
+    if isinstance(values, list):
+        if not values or len(values) > 2:
+            raise ValueError("SHAP contributions are only supported for binary classification and regression.")
+        values = values[-1]
+    matrix = np.asarray(values, dtype=float)
+    if matrix.ndim == 3:
+        if matrix.shape[2] > 2:
+            raise ValueError("SHAP contributions are only supported for binary classification and regression.")
+        matrix = matrix[:, :, -1]
+    if matrix.ndim != 2 or matrix.shape != (n_rows, n_features):
+        raise ValueError("SHAP contributions are only supported for binary classification and regression.")
+    return matrix
 
 
 def model_feature_names(model: Any) -> list[str] | None:
@@ -1206,7 +1260,7 @@ def predict_scores(model: Any, features: pd.DataFrame, problem_type: str) -> np.
 
 
 def predict_contributions(model: Any, features: pd.DataFrame) -> np.ndarray:
-    """TreeSHAP contributions from LightGBM (``pred_contrib=True``), without the expected-value column.
+    """TreeSHAP contributions from ``shap.TreeExplainer``, one column per feature.
 
     Args:
         model: LightGBM Booster, sklearn estimator, or wrapper with ``.model`` / ``.booster_``.
@@ -1216,23 +1270,26 @@ def predict_contributions(model: Any, features: pd.DataFrame) -> np.ndarray:
         Array of shape ``(n_rows, n_features)``.
 
     Raises:
-        TypeError: If ``model`` is missing, ``features`` is not a DataFrame, or no Booster is found.
+        TypeError: If ``model`` is missing, ``features`` is not a DataFrame, or no tree model is found.
         ValueError: If the contribution matrix is not binary/regression TreeSHAP.
     """
     if model is None:
         raise TypeError("model is required.")
     if not isinstance(features, pd.DataFrame):
         raise TypeError(f"features must be a pandas DataFrame, got {type(features).__name__}.")
-    booster = _lightgbm_booster(model)
-    if booster is None:
+    tree_model = _lightgbm_tree_model(model)
+    if tree_model is None:
         raise TypeError(
             "TreeSHAP requires a LightGBM Booster or sklearn estimator with booster_. "
             f"Got {type(model).__name__}."
         )
-    output = np.asarray(booster.predict(features, pred_contrib=True))
-    if output.ndim != 2 or output.shape[1] != features.shape[1] + 1:
-        raise ValueError("SHAP contributions are only supported for binary classification and regression.")
-    return output[:, :-1]
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="LightGBM binary classifier with TreeExplainer shap values output has changed to a list of ndarray",
+        )
+        values = shap.TreeExplainer(tree_model).shap_values(features)
+    return _shap_feature_matrix(values, len(features), features.shape[1])
 
 
 def _labels_and_scores(scores: np.ndarray, labels: np.ndarray, problem_type: str) -> tuple[np.ndarray, np.ndarray]:
@@ -1644,7 +1701,8 @@ def population_drift_analyzer(source: pd.DataFrame, target: pd.DataFrame, featur
         "notes": {name: result.notes for name, result in tasks.items() if result.notes},
         "elapsed_seconds": round(time.perf_counter() - start, 2),
         "versions": {"python": platform.python_version(), "numpy": np.__version__, "pandas": pd.__version__,
-                     "scipy": scipy.__version__, "scikit-learn": sklearn.__version__, "lightgbm": lgb.__version__},
+                     "scipy": scipy.__version__, "scikit-learn": sklearn.__version__, "lightgbm": lgb.__version__,
+                     "shap": shap.__version__},
     }
     return DriftAnalysisResult(tasks, metadata)
 

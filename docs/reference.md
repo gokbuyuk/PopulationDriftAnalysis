@@ -101,7 +101,7 @@ One function per question. A failing task is logged in `metadata["failed_tasks"]
 | Are values outside the training tails? | Share of new values outside the source 0.5%–99.5% quantiles, one-sided binomial test against the expected tail share, BH across features. Also the share beyond the source min and max. | Quantiles, so one training outlier does not define the support. |
 | What share of new rows has no training neighbors? | Isolation Forest fitted on 70% of source rows. The threshold is the 1% quantile of scores on the held-out 30%, so the null share is 1% by construction. One-sided binomial test. Capped at 100,000 rows. | A product of per-feature ranges can still leave holes. |
 | Did the score distribution change? | KS and PSI on predicted probabilities. Two-proportion z-test and Cohen’s h on the positive rate at the operating threshold, and the same test for the share of scores within ±0.05 of that threshold. | A small location shift can move the approval rate without a large PSI. The two questions are separate signals. |
-| Did the reasons for the scores change? | TreeSHAP via `pred_contrib`, at most 5,000 rows per population. KS on contributions. Spearman correlation of mean absolute SHAP. | A similar score histogram can be produced by different features. |
+| Did the reasons for the scores change? | TreeSHAP via `shap.TreeExplainer`, at most 5,000 rows per population. KS on contributions. Spearman correlation of mean absolute SHAP. | A similar score histogram can be produced by different features. |
 
 ### Performance without labels
 
@@ -198,7 +198,7 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 | AUC | area under the curve | Area under the ROC curve. 0.5 means no separation. Domain classifier: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe. |
 | ROC | receiver operating characteristic | True-positive rate against false-positive rate across cutoffs. AUC is its area. |
 | SHAP | Shapley additive explanations | A feature's additive contribution to one score. Mean absolute SHAP rank correlation below 0.80: the ranking of reasons changed. |
-| TreeSHAP | Shapley additive explanations from trees | SHAP for a tree model, from LightGBM pred_contrib. |
+| TreeSHAP | Shapley additive explanations from trees | SHAP for a tree model, from `shap.TreeExplainer`. |
 | OOF | out-of-fold | Score from a model that did not train on that row. |
 
 ### Estimates

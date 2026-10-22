@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Callable
 
 import joblib
 import lightgbm as lgb
+import numpy as np
 import pandas as pd
 import pytest
+import shap
 
+import population_drift.analysis as analysis
 from population_drift.analysis import (
     _copy_warnings,
     load_model,
@@ -88,6 +93,110 @@ def test_predict_contributions_reads_a_native_booster() -> None:
     estimator, frame = _fitted_classifier()
     contrib = predict_contributions(estimator.booster_, frame[["x"]])
     _check(contrib.shape, (len(frame), 1), "TreeSHAP shape from a Booster")
+
+
+class _FakeTreeExplainer:
+    """Test double for ``shap.TreeExplainer`` that records the explained model."""
+
+    models: list[object] = []
+    values_for: Callable[[pd.DataFrame], object] | None = None
+
+    def __init__(self, model: object) -> None:
+        """Record ``model``; ``values_for`` must already be set on the class."""
+        if model is None:
+            raise TypeError("model is required.")
+        if _FakeTreeExplainer.values_for is None:
+            raise TypeError("values_for is required.")
+        _FakeTreeExplainer.models.append(model)
+
+    def shap_values(self, features: pd.DataFrame) -> object:
+        """Return the scripted contribution matrix.
+
+        Args:
+            features: Rows passed to the explainer.
+
+        Returns:
+            Scripted SHAP values.
+
+        Raises:
+            TypeError: If ``features`` is not a DataFrame.
+        """
+        if not isinstance(features, pd.DataFrame):
+            raise TypeError("features must be a DataFrame.")
+        values_for = _FakeTreeExplainer.values_for
+        if values_for is None:
+            raise TypeError("values_for is required.")
+        return values_for(features)
+
+
+def _install_tree_explainer(
+    monkeypatch: pytest.MonkeyPatch,
+    values_for: Callable[[pd.DataFrame], object],
+) -> list[object]:
+    """Replace ``analysis.shap.TreeExplainer`` with ``_FakeTreeExplainer``.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        values_for: Returns the fake ``shap_values`` matrix for the features.
+
+    Returns:
+        Models passed to ``TreeExplainer``.
+
+    Raises:
+        TypeError: If ``values_for`` is None.
+    """
+    if values_for is None:
+        raise TypeError("values_for is required.")
+    _FakeTreeExplainer.models = []
+    _FakeTreeExplainer.values_for = values_for
+    monkeypatch.setattr(
+        analysis, "shap", SimpleNamespace(TreeExplainer=_FakeTreeExplainer), raising=False)
+    return _FakeTreeExplainer.models
+
+
+def test_predict_contributions_uses_shap_tree_explainer(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Contributions come from ``shap.TreeExplainer.shap_values``, not ``pred_contrib``."""
+    estimator, frame = _fitted_classifier()
+    features = frame[["x"]]
+    _install_tree_explainer(monkeypatch, lambda data: np.full((len(data), data.shape[1]), 0.25))
+    contrib = predict_contributions(estimator, features)
+    _check(contrib.tolist(), np.full((len(features), 1), 0.25).tolist(), "TreeExplainer matrix")
+
+
+def test_predict_contributions_explains_the_nested_estimator(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """TreeExplainer receives the inner LightGBM estimator, not the scoring wrapper."""
+    estimator, frame = _fitted_classifier()
+    seen = _install_tree_explainer(
+        monkeypatch, lambda data: np.zeros((len(data), data.shape[1])))
+    predict_contributions(Model(estimator), frame[["x"]])
+    _check([type(item).__name__ for item in seen], ["LGBMClassifier"], "explained model")
+
+
+def test_predict_contributions_uses_the_positive_class_matrix(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A class-list from TreeExplainer keeps the last (positive-class) block."""
+    estimator, frame = _fitted_classifier()
+    _install_tree_explainer(
+        monkeypatch,
+        lambda data: [np.zeros((len(data), 1)), np.ones((len(data), 1))],
+    )
+    contrib = predict_contributions(estimator, frame[["x"]])
+    _check(contrib.tolist(), np.ones((len(frame), 1)).tolist(), "positive-class SHAP")
+
+
+def test_predict_contributions_matches_shap_tree_explainer() -> None:
+    """A live TreeExplainer on the estimator matches ``predict_contributions``."""
+    estimator, frame = _fitted_classifier()
+    features = frame[["x"]]
+    raw = shap.TreeExplainer(estimator).shap_values(features)
+    expected = raw[-1] if isinstance(raw, list) else np.asarray(raw)
+    if getattr(expected, "ndim", 0) == 3:
+        expected = expected[:, :, -1]
+    actual = predict_contributions(estimator, features)
+    if not np.allclose(actual, expected):
+        pytest.fail("TreeExplainer values diverged from predict_contributions.")
 
 
 def test_predict_contributions_names_a_scorer_without_a_booster() -> None:
