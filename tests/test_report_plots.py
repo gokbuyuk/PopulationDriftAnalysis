@@ -13,6 +13,7 @@ from population_drift.report import (
     BaselineRun,
     ComparisonRun,
     _domain_classifier_figure,
+    _draw_domain_drivers,
     _kernel_interpretation,
     _kernel_results,
     _null_panel,
@@ -37,8 +38,8 @@ def _domain_run() -> tuple[ComparisonRun, BaselineRun]:
             "permutation_p": 0.01,
         }]),
         "domain_classifier__importance": pd.DataFrame([
-            {"feature": "x1", "gain_share": 0.6},
-            {"feature": "x2", "gain_share": 0.4},
+            {"feature": "x1", "mean_abs_shap": 0.6, "shap_share": 0.6},
+            {"feature": "x2", "mean_abs_shap": 0.4, "shap_share": 0.4},
         ]),
         "mmd__main": pd.DataFrame([{
             "mmd2": 0.05, "permutation_p": 0.01, "n_source_rows": 100, "n_target_rows": 80,
@@ -125,6 +126,32 @@ def test_kernel_interpretation_rejects_non_mapping_entries() -> None:
     """Entries must be mappings with title, null, and observed."""
     with pytest.raises(ValueError, match="entries"):
         _kernel_interpretation("not a sequence of dicts")  # type: ignore[arg-type]
+
+
+def test_domain_classifier_drivers_use_shap_share() -> None:
+    """Driver bars are mean-|SHAP| shares, even when a gain column is also present."""
+    fig, ax = plt.subplots()
+    try:
+        _draw_domain_drivers(ax, pd.DataFrame({
+            "feature": ["x1", "x2"],
+            "shap_share": [0.7, 0.3],
+            "gain_share": [0.1, 0.9],
+        }))
+        widths = [patch.get_width() for patch in ax.patches]
+        _check(widths, [0.7, 0.3], "bar widths follow shap_share, not gain_share")
+        _check(ax.get_xlabel(), "SHAP importance", "axis label")
+    finally:
+        plt.close(fig)
+
+
+def test_domain_classifier_drivers_require_shap_share() -> None:
+    """A gain-only importance table is rejected instead of being plotted as SHAP."""
+    fig, ax = plt.subplots()
+    try:
+        with pytest.raises(ValueError, match="shap_share"):
+            _draw_domain_drivers(ax, pd.DataFrame({"feature": ["x1"], "gain_share": [1.0]}))
+    finally:
+        plt.close(fig)
 
 
 def test_domain_classifier_scores_and_auc_share_a_wide_top_row() -> None:

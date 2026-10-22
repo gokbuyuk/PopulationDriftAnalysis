@@ -1275,14 +1275,23 @@ def _draw_domain_scores(ax: plt.Axes, data: dict[str, Any]) -> None:
 
 
 def _draw_domain_drivers(ax: plt.Axes, importance: pd.DataFrame) -> None:
-    """Horizontal gain-share bars for the features that separate the populations.
+    """Horizontal TreeSHAP bars for the features that separate the populations.
 
     Args:
         ax: Panel to draw on.
-        importance: Domain-classifier importance table, lowest gain at the top.
+        importance: Domain-classifier importance table, lowest ``shap_share`` at the top.
+
+    Raises:
+        TypeError: If ``importance`` is not a DataFrame.
+        ValueError: If ``feature`` or ``shap_share`` is missing.
     """
-    ax.barh(importance["feature"], importance["gain_share"], color="#475569")
-    ax.set_xlabel("gain share")
+    if not isinstance(importance, pd.DataFrame):
+        raise TypeError(f"importance must be a pandas DataFrame, got {type(importance).__name__}.")
+    missing = {"feature", "shap_share"} - set(importance.columns)
+    if missing:
+        raise ValueError(f"Domain-classifier importance table is missing columns: {sorted(missing)}.")
+    ax.barh(importance["feature"], importance["shap_share"], color="#475569")
+    ax.set_xlabel("SHAP importance")
     ax.set_title("Separation drivers", fontsize=10)
     _style_axes(ax)
 
@@ -2379,7 +2388,7 @@ def _domain_paragraph(run: ComparisonRun, baseline: BaselineRun | None, domain: 
             + (f", permutation p = {perm_p:.3f}" if np.isfinite(perm_p) else "")
             + (f"; the baseline 95th percentile is {p95:.3f}" if np.isfinite(p95) else "")
             + ". An area under the curve (AUC) near 0.5 means indistinguishable; 0.55–0.65 mild, 0.65–0.80 moderate, &gt; 0.80 strong shift. "
-            f"The separation is driven mostly by <b>{', '.join(map(html.escape, drivers))}</b>. A low area under the curve (AUC) can still "
+            f"TreeSHAP on that classifier ranks <b>{', '.join(map(html.escape, drivers))}</b> as the main drivers. A low area under the curve (AUC) can still "
             "hide a moderate shift in a single feature, so read it together with the feature table.</p>")
 
 

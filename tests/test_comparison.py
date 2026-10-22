@@ -158,7 +158,7 @@ def test_interpret_results_stays_mild_for_two_moderate_signals_that_are_not_mode
         "categorical": {"main": pd.DataFrame([{"feature": "c", "unseen_share": 0.02}])},
         "domain_classifier": {
             "main": pd.DataFrame([{"feature": "__global__", "auc": 0.70, "permutation_p": 0.01}]),
-            "importance": pd.DataFrame([{"feature": "x", "gain_share": 1.0}]),
+            "importance": pd.DataFrame([{"feature": "x", "shap_share": 1.0}]),
         },
     }
     baseline = pd.DataFrame([
@@ -178,7 +178,7 @@ def test_interpret_results_is_moderate_when_a_third_unimportant_moderate_signal_
         "categorical": {"main": pd.DataFrame([{"feature": "c", "unseen_share": 0.02}])},
         "domain_classifier": {
             "main": pd.DataFrame([{"feature": "__global__", "auc": 0.70, "permutation_p": 0.01}]),
-            "importance": pd.DataFrame([{"feature": "x", "gain_share": 1.0}]),
+            "importance": pd.DataFrame([{"feature": "x", "shap_share": 1.0}]),
         },
         "mmd": {"main": pd.DataFrame([{"feature": "__global__", "mmd2": 0.01, "permutation_p": 0.01}])},
     }
