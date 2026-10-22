@@ -143,7 +143,7 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 
 `metadata.json` records sizes, the feature list and types, whether a model and a label were supplied, the full config, failed tasks, elapsed time, and library versions.
 
-`--report` writes a standalone HTML file with embedded plots and a markdown copy beside it. The markdown file references PNG files in `{report stem}_plots/`.
+`--report` writes a standalone HTML file with embedded plots and a markdown copy beside it. The markdown file references PNG files in `{report stem}_plots/`. A comparison also writes a short decision brief at `{report stem}_short.html` / `{report stem}_short.md` (plots under `{report stem}_short_plots/`) with the verdict, counted signals, flagged features, and the plots needed to decide whether to score new data. The detailed report keeps methods, full tables, and baseline diagnostics.
 
 ## References
 

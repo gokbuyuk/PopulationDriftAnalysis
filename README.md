@@ -76,7 +76,7 @@ Regenerate the HTML and markdown reports from a finished directory:
 python -m population_drift.report --comparison runs/comparison --out runs/report.html
 ```
 
-That also writes `runs/report.md` and PNG plots under `runs/report_plots/`.
+That writes the detailed report (`runs/report.html`, `runs/report.md`, plots under `runs/report_plots/`) and a short decision brief (`runs/report_short.html`, `runs/report_short.md`, plots under `runs/report_short_plots/`).
 
 `baseline` builds one source-vs-source null. Pass it to `compare` with `--baseline` when there is no `--test`. With `--test`, each reference gets its own baseline inside the output directory.
 
@@ -84,8 +84,10 @@ That also writes `runs/report.md` and PNG plots under `runs/report_plots/`.
 
 | Path | Contents |
 |---|---|
-| `runs/report.html` | Report. Each section names the pair that test used. Plots are embedded. |
-| `runs/report.md` | Same report as markdown. Plots are PNG files under `runs/report_plots/`. |
+| `runs/report_short.html` | Decision brief for data scientists: verdict, action, counted signals, flagged features, and the essential plots. |
+| `runs/report_short.md` | Same brief as markdown. Plots are PNG files under `runs/report_short_plots/`. |
+| `runs/report.html` | Full report. Each section names the pair that test used. Plots are embedded. |
+| `runs/report.md` | Same full report as markdown. Plots are PNG files under `runs/report_plots/`. |
 | `runs/comparison/decision.json` | `verdict_level` (`severe`, `moderate`, `mild`), signals, and `task_pairs`. |
 
 `severe` means do not use the model as is. `moderate` means use only with review. `mild` means no severe signal, at most two moderate signals, and no moderate signal on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP on the population used for that comparison.
