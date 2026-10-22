@@ -224,12 +224,12 @@ def test_null_panel_shows_x_tick_labels_inside_the_padded_window() -> None:
         plt.close(fig)
 
 
-def test_null_panel_labels_y_as_baseline_rounds() -> None:
-    """Bar height is how many baseline rounds fell in that statistic bin."""
+def test_null_panel_labels_y_as_counts() -> None:
+    """Bar height is the count of baseline draws in that statistic bin."""
     fig, ax = plt.subplots()
     try:
         _null_panel(ax, np.linspace(0.01, 0.04, 30), 0.05, "MMD²")
-        _check(ax.get_ylabel(), "baseline rounds", "y-axis label")
+        _check(ax.get_ylabel(), "counts", "y-axis label")
     finally:
         plt.close(fig)
 

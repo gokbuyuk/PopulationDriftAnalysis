@@ -1555,7 +1555,7 @@ def _null_panel(ax: plt.Axes, null: np.ndarray, observed: float, title: str, per
         ax.axvline(observed, color=TARGET_COLOR, lw=2.2, label="observed")
         span.append([observed])
     ax.set_title(title, fontsize=10)
-    ax.set_ylabel("baseline rounds")
+    ax.set_ylabel("counts")
     ax.set_yticks([])
     _style_axes(ax)
     if span:
