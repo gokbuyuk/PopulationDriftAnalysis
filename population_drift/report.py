@@ -1641,45 +1641,136 @@ def plot_model_outputs(run: ComparisonRun) -> str:
     return figure_html(fig, "Model outputs", "SHAP")
 
 
-def plot_performance(run: ComparisonRun) -> str:
-    """Reference vs estimated metric with 95% confidence interval (CI) for each estimation method."""
-    rows = []
-    for task, label in (("weighted_performance", "weighting"), ("cbpe", "CBPE")):
+def _degradation_interval(
+    reference: Any, low: Any, high: Any, higher_is_better: bool,
+) -> tuple[float, float]:
+    """Map an estimate CI onto the degradation scale.
+
+    Args:
+        reference: Metric on the training population.
+        low: Lower bound of the estimate CI.
+        high: Upper bound of the estimate CI.
+        higher_is_better: If True, degradation is reference minus the estimate.
+
+    Returns:
+        ``(ci_low, ci_high)`` on the degradation scale, or ``(nan, nan)`` when
+        either bound is non-finite.
+
+    Raises:
+        TypeError: If ``reference`` is not numeric or ``higher_is_better`` is not a bool.
+    """
+    if not isinstance(higher_is_better, (bool, np.bool_)):
+        raise TypeError(f"higher_is_better must be bool, got {type(higher_is_better).__name__}.")
+    try:
+        ref = float(reference)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"reference must be numeric, got {type(reference).__name__}.") from exc
+    lo_raw, hi_raw = float(low) if pd.notna(low) else np.nan, float(high) if pd.notna(high) else np.nan
+    if not np.isfinite(lo_raw) or not np.isfinite(hi_raw):
+        return np.nan, np.nan
+    if higher_is_better:
+        lo_raw, hi_raw = ref - hi_raw, ref - lo_raw
+    else:
+        lo_raw, hi_raw = lo_raw - ref, hi_raw - ref
+    if lo_raw > hi_raw:
+        lo_raw, hi_raw = hi_raw, lo_raw
+    return round(lo_raw, 10), round(hi_raw, 10)
+
+
+def _performance_degradation_frame(run: ComparisonRun) -> pd.DataFrame:
+    """One row per method and metric for the degradation forest.
+
+    Args:
+        run: Comparison with weighting and/or CBPE tables.
+
+    Returns:
+        Columns ``label``, ``degradation``, ``ci_low``, ``ci_high``, ``baseline_threshold``.
+    """
+    rows: list[dict[str, Any]] = []
+    for task, method in (("weighted_performance", "weighting"), ("cbpe", "CBPE")):
         table = run.table(task)
-        for row in table.itertuples():
-            rows.append((row.metric, label, row.reference_value, row.estimate, row.ci_low, row.ci_high))
-    if not rows:
+        if table.empty:
+            continue
+        thresholds = run.baseline_threshold(task, "degradation")
+        for rec in table.itertuples():
+            rows.append(_performance_degradation_row(rec, method, thresholds))
+    return pd.DataFrame(rows)
+
+
+def _performance_degradation_row(
+    rec: Any, method: str, thresholds: dict[str, float],
+) -> dict[str, Any]:
+    """Build one forest-plot row from a performance table record.
+
+    Args:
+        rec: Named tuple from the weighting or CBPE table.
+        method: Display name of the estimator.
+        thresholds: Metric name to baseline p95 of degradation.
+
+    Returns:
+        One row mapping for ``_performance_degradation_frame``.
+    """
+    metric = str(rec.metric)
+    ref, est = float(rec.reference_value), float(rec.estimate)
+    hib = bool(getattr(rec, "higher_is_better", True))
+    stored = getattr(rec, "degradation", np.nan)
+    deg = float(stored) if pd.notna(stored) else (ref - est if hib else est - ref)
+    ci_low, ci_high = _degradation_interval(ref, getattr(rec, "ci_low", np.nan),
+                                            getattr(rec, "ci_high", np.nan), hib)
+    tick = thresholds.get(metric, np.nan)
+    return {
+        "label": f"{PLOT_METRIC.get(metric, metric)} · {method}",
+        "degradation": deg, "ci_low": ci_low, "ci_high": ci_high,
+        "baseline_threshold": float(tick) if tick is not None and np.isfinite(tick) else np.nan,
+    }
+
+
+def _draw_performance_degradation(ax: plt.Axes, frame: pd.DataFrame) -> None:
+    """Forest plot of degradation with a short baseline tick per row that has one.
+
+    Args:
+        ax: Panel to draw on.
+        frame: Output of ``_performance_degradation_frame``, first row at the top.
+
+    Raises:
+        TypeError: If ``frame`` is not a DataFrame.
+        ValueError: If ``label`` or ``degradation`` is missing.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError(f"frame must be a pandas DataFrame, got {type(frame).__name__}.")
+    missing = {"label", "degradation"} - set(frame.columns)
+    if missing:
+        raise ValueError(f"Performance frame is missing columns: {sorted(missing)}.")
+    y = np.arange(len(frame))
+    ax.axvline(0.0, color="#334155", lw=1)
+    for i, row in enumerate(frame.itertuples()):
+        if np.isfinite(getattr(row, "ci_low", np.nan)) and np.isfinite(getattr(row, "ci_high", np.nan)):
+            ax.plot([row.ci_low, row.ci_high], [i, i], color=TARGET_COLOR, lw=2.2)
+        ax.plot(row.degradation, i, marker="o", color=TARGET_COLOR, ms=7)
+        tick = getattr(row, "baseline_threshold", np.nan)
+        if np.isfinite(tick):
+            ax.plot([tick, tick], [i - 0.35, i + 0.35], color="black", lw=2)
+    ax.set_yticks(y, frame["label"], fontsize=9)
+    ax.set_ylim(len(frame) - 0.4, -0.6)
+    ax.set_xlabel("degradation  (worse →; tick = baseline p95)")
+    ax.set_title("Performance degradation (95% CI)")
+    _style_axes(ax)
+    cols = [name for name in ("degradation", "ci_low", "ci_high", "baseline_threshold") if name in frame.columns]
+    span = np.append(frame[cols].to_numpy(dtype=float).ravel(), 0.0)
+    if np.isfinite(span).any():
+        ax.set_xlim(*_axis_limits(span))
+
+
+def plot_performance(run: ComparisonRun) -> str:
+    """Degradation of each estimated metric vs its training reference, with 95% CI."""
+    frame = _performance_degradation_frame(run)
+    if frame.empty:
         return ""
-    df = pd.DataFrame(rows, columns=["metric", "method", "reference", "estimate", "low", "high"])
-    metrics = list(dict.fromkeys(df["metric"]))
-    ncols = min(4, len(metrics))
-    nrows = math.ceil(len(metrics) / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 2.4 * nrows), squeeze=False)
-    for ax, metric in zip(axes.flat, metrics):
-        sub = df[df["metric"] == metric].reset_index(drop=True)
-        for i, row in sub.iterrows():
-            ax.plot(row["reference"], i, marker="D", color="#64748b", ms=7, label="reference" if i == 0 else None)
-            if np.isfinite(row["low"]):
-                ax.plot([row["low"], row["high"]], [i, i], color=TARGET_COLOR, lw=2)
-            ax.plot(row["estimate"], i, marker="o", color=TARGET_COLOR, ms=7, label="new (estimate)" if i == 0 else None)
-        ax.set_yticks(range(len(sub)), sub["method"], fontsize=8)
-        ax.set_ylim(-0.6, len(sub) - 0.4)
-        ax.set_title(PLOT_METRIC.get(str(metric), str(metric)), fontsize=10)
-        ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
-        ax.tick_params(axis="x", labelsize=8)
-        _style_axes(ax)
-        metric_values = sub[["reference", "estimate", "low", "high"]].to_numpy(dtype=float).ravel()
-        if np.isfinite(metric_values).any():
-            ax.set_xlim(*_axis_limits(metric_values))
-    for ax in list(axes.flat)[len(metrics):]:
-        ax.axis("off")
-    handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper right", frameon=False, fontsize=8, ncol=2)
-    _collapse_shared_text(fig, axes)
-    fig.suptitle("Reference vs estimate (95% CI)", fontsize=11, x=0.02, ha="left")
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
-    labels = " ".join(PLOT_METRIC.get(str(metric), str(metric)) for metric in metrics)
-    return figure_html(fig, "Estimated performance", f"CI CBPE {labels}")
+    fig, ax = plt.subplots(figsize=(7.4, max(3.2, 0.42 * len(frame) + 1.4)))
+    _draw_performance_degradation(ax, frame)
+    fig.tight_layout()
+    names = " ".join(dict.fromkeys(frame["label"].str.split(" · ").str[0]))
+    return figure_html(fig, "Estimated performance", f"CI CBPE {names}")
 
 
 def plot_calibration(run: ComparisonRun) -> str:

@@ -25,6 +25,9 @@ from population_drift.report import (
     plot_calibration,
     plot_categories,
     plot_feature_overview,
+    plot_performance,
+    _degradation_interval,
+    _draw_performance_degradation,
     section_joint,
     section_short_model_evidence,
 )
@@ -379,6 +382,110 @@ def test_category_share_axis_starts_at_zero(monkeypatch: pytest.MonkeyPatch) -> 
     )
     snapshot = _capture_plot(monkeypatch, plot_categories, run, ["c1"])
     _check(snapshot["ylims"][0], (0.0, 0.7), "share y-axis")
+
+
+def test_degradation_interval_flips_a_higher_is_better_ci() -> None:
+    """AUC-style intervals map as reference minus the estimate bounds."""
+    _check(_degradation_interval(0.84, 0.78, 0.82, True), (0.02, 0.06), "higher is better")
+    _check(_degradation_interval(0.12, 0.13, 0.17, False), (0.01, 0.05), "lower is better")
+
+
+def test_degradation_interval_is_nan_when_the_ci_is_missing() -> None:
+    """A missing interval does not invent bounds."""
+    low, high = _degradation_interval(0.8, np.nan, np.nan, True)
+    _check(np.isnan(low) and np.isnan(high), True, "both bounds NaN")
+
+
+def test_degradation_interval_rejects_invalid_input() -> None:
+    """Reference and the higher-is-better flag must be usable numbers and a bool."""
+    with pytest.raises(TypeError, match="reference"):
+        _degradation_interval(None, 0.1, 0.2, True)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="higher_is_better"):
+        _degradation_interval(0.8, 0.1, 0.2, "yes")  # type: ignore[arg-type]
+
+
+def _short_vertical_xs(ax: plt.Axes) -> list[float]:
+    """X positions of short vertical ticks (not a full-height axvline)."""
+    xs: list[float] = []
+    for line in ax.lines:
+        x = np.asarray(line.get_xdata(), dtype=float)
+        y = np.asarray(line.get_ydata(), dtype=float)
+        if x.size == 2 and np.isclose(x[0], x[1]) and abs(float(y[1] - y[0])) < 0.9:
+            xs.append(round(float(x[0]), 10))
+    return sorted(xs)
+
+
+def _marker_xs(ax: plt.Axes) -> list[float]:
+    """X positions of plotted markers."""
+    xs: list[float] = []
+    for line in ax.lines:
+        marker = line.get_marker()
+        if marker not in (None, "None", ""):
+            xs.extend(round(float(v), 10) for v in np.asarray(line.get_xdata(), dtype=float))
+    return xs
+
+
+def test_performance_forest_plots_degradation_and_baseline_ticks() -> None:
+    """One forest: point + CI on degradation, a short tick only where a baseline exists."""
+    frame = pd.DataFrame([
+        {"label": "AUC · weighting", "degradation": 0.04, "ci_low": 0.02, "ci_high": 0.06,
+         "baseline_threshold": 0.025},
+        {"label": "Brier · weighting", "degradation": 0.03, "ci_low": 0.01, "ci_high": 0.05,
+         "baseline_threshold": np.nan},
+        {"label": "AUC · CBPE", "degradation": 0.02, "ci_low": 0.005, "ci_high": 0.04,
+         "baseline_threshold": 0.018},
+    ])
+    fig, ax = plt.subplots()
+    try:
+        _draw_performance_degradation(ax, frame)
+        fig.canvas.draw()
+        _check(ax.get_xlabel().startswith("degradation"), True, "x label")
+        _check([lab.get_text() for lab in ax.get_yticklabels()],
+               ["AUC · weighting", "Brier · weighting", "AUC · CBPE"], "row labels")
+        _check(sorted(_marker_xs(ax)), [0.02, 0.03, 0.04], "degradation points")
+        _check(_short_vertical_xs(ax), [0.018, 0.025], "baseline ticks only")
+        _check(len(ax.patches), 0, "no tolerance band")
+    finally:
+        plt.close(fig)
+
+
+def test_plot_performance_is_a_single_degradation_panel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Weighting and CBPE share one forest instead of per-metric small multiples."""
+    run = ComparisonRun(
+        Path("."),
+        {
+            "weighted_performance__main": pd.DataFrame([{
+                "metric": "auc", "higher_is_better": True, "reference_value": 0.84, "estimate": 0.80,
+                "ci_low": 0.78, "ci_high": 0.82, "degradation": 0.04,
+            }]),
+            "cbpe__main": pd.DataFrame([{
+                "metric": "auc", "higher_is_better": True, "reference_value": 0.83, "estimate": 0.81,
+                "ci_low": 0.79, "ci_high": 0.825, "degradation": 0.02,
+            }]),
+        },
+        {},
+        {"n_source": 10, "n_target": 5, "feature_types": {}, "has_model": True, "label_col": "y",
+         "problem_type": "binary", "config": {"performance_tolerance": 0.02}},
+        {"signals": [], "warnings": [], "baseline_rounds": 10, "baseline_subset_size": 5},
+        pd.DataFrame(),
+        pd.DataFrame([
+            {"task": "weighted_performance", "table": "main", "feature": "auc", "metric": "degradation",
+             "baseline_threshold": 0.03},
+        ]),
+    )
+    snapshot = _capture_plot(monkeypatch, plot_performance, run)
+    _check(len(snapshot["xlims"]), 1, "single panel")
+
+
+def test_plot_performance_returns_empty_when_there_are_no_estimates() -> None:
+    """No figure when both performance tables are missing."""
+    run = ComparisonRun(
+        Path("."), {}, {},
+        {"n_source": 10, "n_target": 5, "feature_types": {}, "has_model": True, "label_col": "y"},
+        {"signals": [], "warnings": [], "baseline_rounds": 10, "baseline_subset_size": 5},
+        pd.DataFrame(), pd.DataFrame(),
+    )
+    _check(plot_performance(run), "", "empty html")
 
 
 def test_calibration_axes_start_at_zero(monkeypatch: pytest.MonkeyPatch) -> None:
