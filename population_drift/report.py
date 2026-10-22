@@ -1322,14 +1322,14 @@ def _axis_limits(values: Any, *, probability: bool = False) -> tuple[float, floa
     return round(low - _AXIS_PAD, 10), upper
 
 
-def _half_or_unit_axis_limit(values: Any) -> float:
-    """Upper axis bound of 0.5, or 1 when any finite value exceeds 0.5.
+def _psi_axis_upper(values: Any) -> float:
+    """Upper axis bound: ``max(max finite value + 0.1, 0.25)``.
 
     Args:
         values: Numeric values drawn on the axis.
 
     Returns:
-        0.5 when every finite value is at most 0.5, else 1.0.
+        The upper bound. Empty or non-finite input uses the 0.25 floor.
 
     Raises:
         TypeError: If ``values`` is None or cannot be coerced to a numeric array.
@@ -1341,9 +1341,9 @@ def _half_or_unit_axis_limit(values: Any) -> float:
     except (TypeError, ValueError) as exc:
         raise TypeError(f"values must be numeric, got {type(values).__name__}.") from exc
     finite = array[np.isfinite(array)]
-    if finite.size and np.any(finite > 0.5):
-        return 1.0
-    return 0.5
+    if finite.size == 0:
+        return 0.25
+    return round(max(float(finite.max()) + _AXIS_PAD, 0.25), 10)
 
 
 def _plot_shap_importance(ax: plt.Axes, shap: pd.DataFrame) -> None:
@@ -1392,21 +1392,24 @@ def _plot_psi_by_feature(ax: plt.Axes, features: pd.DataFrame, p95: dict[str, fl
     ax.axvline(0.25, ls="--", color="#444", lw=1)
     ax.set_xlabel("PSI  (dashed 0.10 / 0.25; tick = baseline p95)")
     ax.set_title("PSI by feature")
-    ax.set_xlim(0, _half_or_unit_axis_limit(features["psi"]))
     _style_axes(ax)
+    span = list(features["psi"]) + [
+        threshold for threshold in p95.values() if threshold is not None and np.isfinite(threshold)
+    ]
+    ax.set_xlim(0, _psi_axis_upper(span))
 
 
 def _plot_psi_vs_shap(ax: plt.Axes, features: pd.DataFrame) -> None:
-    """Scatter PSI against SHAP importance; label only above-baseline features.
+    """Scatter PSI against SHAP importance; label high-importance, high-PSI points.
 
     Args:
         ax: Panel to draw on.
-        features: Feature assessment with PSI, SHAP share, and ``beyond_baseline``.
+        features: Feature assessment with PSI, SHAP share, and ``important``.
     """
     colors = [LEVEL_COLORS.get(level, "#999") for level in features["severity"]]
     ax.scatter(features["model_importance_share"], features["psi"], c=colors, s=60, edgecolor="white")
     for row in features.itertuples():
-        if getattr(row, "beyond_baseline", False):
+        if bool(getattr(row, "important", False)) and float(row.psi) >= 0.25:
             ax.annotate(str(row.feature), (row.model_importance_share, row.psi),
                         xytext=(4, 3), textcoords="offset points", fontsize=8)
     ax.axhline(0.10, ls="--", color="#999", lw=1)
@@ -1414,9 +1417,9 @@ def _plot_psi_vs_shap(ax: plt.Axes, features: pd.DataFrame) -> None:
     ax.set_xlabel("SHAP importance")
     ax.set_ylabel("PSI")
     ax.set_title("PSI vs SHAP importance")
-    ax.set_xlim(0, _half_or_unit_axis_limit(features["model_importance_share"]))
-    ax.set_ylim(0, _half_or_unit_axis_limit(features["psi"]))
     _style_axes(ax)
+    ax.set_xlim(0, _psi_axis_upper(features["model_importance_share"]))
+    ax.set_ylim(0, _psi_axis_upper(features["psi"]))
 
 
 def plot_feature_overview(run: ComparisonRun) -> str:
