@@ -1141,6 +1141,46 @@ def _attribution_share(values: pd.Series) -> pd.Series:
     return values / total
 
 
+_AXIS_PAD = 0.1
+
+
+def _axis_limits(values: Any, *, probability: bool = False) -> tuple[float, float]:
+    """Lower and upper bounds for a numeric plot axis.
+
+    Probability axes start at 0. Other axes use max + 0.1. Negative values extend
+    the axis to min - 0.1. A minimum of 0 keeps the origin at 0.
+
+    Args:
+        values: Numeric values drawn on the axis.
+        probability: If True, the lower bound is 0.
+
+    Returns:
+        ``(lower, upper)``.
+
+    Raises:
+        TypeError: If ``values`` is None or cannot be coerced to a numeric array.
+        ValueError: If there is no finite value.
+    """
+    if values is None:
+        raise TypeError("values must be numeric, got None.")
+    try:
+        array = np.asarray(values, dtype=float).ravel()
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"values must be numeric, got {type(values).__name__}.") from exc
+    finite = array[np.isfinite(array)]
+    if finite.size == 0:
+        raise ValueError("values must contain at least one finite number.")
+    low, high = float(finite.min()), float(finite.max())
+    upper = round(high + _AXIS_PAD, 10)
+    if probability:
+        return 0.0, upper
+    if np.any(finite < 0):
+        return round(low - _AXIS_PAD, 10), upper
+    if low == 0.0 or low - _AXIS_PAD < 0:
+        return 0.0, upper
+    return round(low - _AXIS_PAD, 10), upper
+
+
 def _half_or_unit_axis_limit(values: Any) -> float:
     """Upper axis bound of 0.5, or 1 when any finite value exceeds 0.5.
 
@@ -1183,6 +1223,11 @@ def _plot_shap_importance(ax: plt.Axes, shap: pd.DataFrame) -> None:
     ax.set_title("SHAP importance")
     ax.legend(frameon=False, fontsize=8)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(
+        np.concatenate([ranked["shap_importance_source"].to_numpy(),
+                        ranked["shap_importance_target"].to_numpy()]),
+        probability=True,
+    ))
 
 
 # --------------------------------------------------------------------------------------
@@ -1269,6 +1314,8 @@ def plot_ecdfs(run: ComparisonRun, features: Sequence[str]) -> str:
         ax.set_title(f"{feature}: KS {row['ks_d']:.3f}, PSI {row['psi']:.3f}", fontsize=10)
         ax.set_ylabel("ECDF")
         _style_axes(ax)
+        ax.set_xlim(*_axis_limits(list(q["source"]) + list(q["target"])))
+        ax.set_ylim(*_axis_limits(q["probs"], probability=True))
     for ax in list(axes.flat)[len(features):]:
         ax.axis("off")
     axes.flat[0].legend(frameon=False, fontsize=8)
@@ -1296,6 +1343,7 @@ def plot_categories(run: ComparisonRun, features: Sequence[str]) -> str:
         ax.set_title(f"{feature}: Cramér's V {stats.loc[feature, 'cramers_v']:.3f}, PSI {stats.loc[feature, 'psi']:.3f}", fontsize=10)
         ax.set_ylabel("share")
         _style_axes(ax)
+        ax.set_ylim(*_axis_limits(list(data["source"]) + list(data["target"]), probability=True))
     for ax in list(axes.flat)[len(features):]:
         ax.axis("off")
     axes.flat[0].legend(frameon=False, fontsize=8)
@@ -1321,6 +1369,10 @@ def plot_missingness(run: ComparisonRun) -> str:
     ax.set_xlabel("missing rate")
     ax.legend(frameon=False)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(
+        np.concatenate([table["missing_rate_source"].to_numpy(), table["missing_rate_target"].to_numpy()]),
+        probability=True,
+    ))
     fig.tight_layout()
     return figure_html(fig, "Missing rates")
 
@@ -1350,18 +1402,26 @@ def null_histogram_bins(n_values: int) -> int:
 
 def _null_panel(ax: plt.Axes, null: np.ndarray, observed: float, title: str, percentile: float = 95) -> None:
     """Histogram of baseline values with the observed value and the baseline threshold."""
+    span = []
     if len(null):
         ax.hist(null, bins=null_histogram_bins(len(null)), color="#94a3b8", edgecolor="white")
         threshold = np.percentile(null, percentile)
         ax.axvline(threshold, color="black", ls="--", lw=1, label=f"baseline p{percentile:.0f}")
+        span.extend([null, [threshold]])
     if np.isfinite(observed):
         ax.axvline(observed, color=TARGET_COLOR, lw=2.2, label="observed")
+        span.append([observed])
     ax.set_title(title, fontsize=10)
     ax.set_yticks([])
     ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
     ax.ticklabel_format(axis="x", style="sci", scilimits=(-3, 4))
     ax.tick_params(axis="x", labelsize=8)
     _style_axes(ax)
+    if span:
+        ax.set_xlim(*_axis_limits(np.concatenate(span)))
+    heights = [patch.get_height() for patch in ax.patches]
+    if heights:
+        ax.set_ylim(*_axis_limits(heights))
 
 
 def plot_null_grid(entries: Sequence[dict[str, Any]], title: str) -> str:
@@ -1400,6 +1460,8 @@ def _draw_domain_scores(ax: plt.Axes, data: dict[str, Any]) -> None:
     ax.set_title("Scores by population", fontsize=10)
     ax.legend(frameon=False, fontsize=8)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(data["bins"], probability=True))
+    ax.set_ylim(*_axis_limits(list(data["source_hist"]) + list(data["target_hist"])))
 
 
 def _draw_domain_drivers(ax: plt.Axes, importance: pd.DataFrame) -> None:
@@ -1422,6 +1484,7 @@ def _draw_domain_drivers(ax: plt.Axes, importance: pd.DataFrame) -> None:
     ax.set_xlabel("SHAP importance")
     ax.set_title("Separation drivers", fontsize=10)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(importance["shap_share"], probability=True))
 
 
 def _domain_classifier_figure(run: ComparisonRun, baseline: BaselineRun | None) -> plt.Figure | None:
@@ -1524,6 +1587,8 @@ def plot_support(run: ComparisonRun) -> str:
         ax.set_title("Joint novelty", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
         _style_axes(ax)
+        ax.set_xlim(*_axis_limits(list(bins) + [outliers["threshold"]]))
+        ax.set_ylim(*_axis_limits(list(outliers["source_hist"]) + list(outliers["target_hist"])))
     if not coverage.empty:
         ax = axes.pop(0)
         cov = coverage.sort_values("outside_share")
@@ -1534,6 +1599,10 @@ def plot_support(run: ComparisonRun) -> str:
         ax.set_title("Outside training range", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
         _style_axes(ax)
+        ax.set_xlim(*_axis_limits(
+            list(cov["outside_share"]) + [cov["expected_share"].iloc[0]],
+            probability=True,
+        ))
     _collapse_shared_text(fig, grid)
     fig.tight_layout()
     return figure_html(fig, "Support checks", "OOD")
@@ -1560,6 +1629,11 @@ def plot_model_outputs(run: ComparisonRun) -> str:
         ax.set_title("Score distribution", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
         _style_axes(ax)
+        scores = list(bins)
+        if prediction.get("threshold") is not None:
+            scores.append(prediction["threshold"])
+        ax.set_xlim(*_axis_limits(scores))
+        ax.set_ylim(*_axis_limits(list(prediction["source_hist"]) + list(prediction["target_hist"])))
     if not shap.empty:
         _plot_shap_importance(axes.pop(0), shap)
     _collapse_shared_text(fig, grid)
@@ -1594,6 +1668,9 @@ def plot_performance(run: ComparisonRun) -> str:
         ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
         ax.tick_params(axis="x", labelsize=8)
         _style_axes(ax)
+        metric_values = sub[["reference", "estimate", "low", "high"]].to_numpy(dtype=float).ravel()
+        if np.isfinite(metric_values).any():
+            ax.set_xlim(*_axis_limits(metric_values))
     for ax in list(axes.flat)[len(metrics):]:
         ax.axis("off")
     handles, labels = axes.flat[0].get_legend_handles_labels()
@@ -1617,6 +1694,8 @@ def plot_calibration(run: ComparisonRun) -> str:
     ax.set_ylabel("positive rate")
     ax.set_title("Calibration", fontsize=10)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(list(reliability["mean_predicted"]) + [0.0, 1.0], probability=True))
+    ax.set_ylim(*_axis_limits(list(reliability["observed_rate"]) + [0.0, 1.0], probability=True))
     fig.tight_layout()
     return figure_html(fig, "Calibration")
 
@@ -1635,6 +1714,7 @@ def plot_baseline_feature_variability(baseline: BaselineRun) -> str:
     ax.set_xlabel("PSI on random training splits")
     ax.legend(frameon=False, fontsize=8)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(list(psi["p95"]) + list(psi["p50"]) + [0.10]))
     fig.tight_layout()
     return figure_html(fig, "Baseline per-feature PSI", "PSI KS")
 

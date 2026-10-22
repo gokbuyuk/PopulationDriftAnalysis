@@ -12,14 +12,18 @@ import pytest
 from population_drift.report import (
     BaselineRun,
     ComparisonRun,
+    _axis_limits,
     _domain_classifier_figure,
     _draw_domain_drivers,
+    _draw_domain_scores,
     _half_or_unit_axis_limit,
     _kernel_interpretation,
     _kernel_panel_reading,
     _kernel_results,
     _null_panel,
     null_histogram_bins,
+    plot_calibration,
+    plot_categories,
     plot_feature_overview,
     section_joint,
     section_short_model_evidence,
@@ -260,6 +264,139 @@ def test_half_or_unit_axis_limit_rejects_non_numeric_input() -> None:
         _half_or_unit_axis_limit(None)
     with pytest.raises(TypeError, match="values"):
         _half_or_unit_axis_limit("psi")
+
+
+def test_axis_limits_start_at_zero_for_probabilities() -> None:
+    """Probability axes start at 0 and pad the maximum by 0.1."""
+    _check(_axis_limits([0.0, 1.0], probability=True), (0.0, 1.1), "full unit range")
+    _check(_axis_limits([0.2, 0.8], probability=True), (0.0, 0.9), "min above 0 still starts at 0")
+
+
+def test_axis_limits_pad_max_and_keep_zero_when_min_is_zero() -> None:
+    """Non-probability axes use max + 0.1 and start at 0 when the minimum is 0."""
+    _check(_axis_limits([0.0, 0.4]), (0.0, 0.5), "min 0")
+    _check(_axis_limits([0.2, 0.5]), (0.1, 0.6), "positive min is padded")
+    _check(_axis_limits([0.05, 0.5]), (0.0, 0.6), "padding below a small min does not go negative")
+
+
+def test_axis_limits_pad_below_zero_when_values_are_negative() -> None:
+    """Negative data keeps a negative side down to min - 0.1."""
+    _check(_axis_limits([-0.3, 0.5]), (-0.4, 0.6), "signed range")
+
+
+def test_axis_limits_rejects_invalid_input() -> None:
+    """The bound requires finite numeric values."""
+    with pytest.raises(TypeError, match="values"):
+        _axis_limits(None)
+    with pytest.raises(TypeError, match="values"):
+        _axis_limits("auc")
+    with pytest.raises(ValueError, match="finite"):
+        _axis_limits([np.nan])
+
+
+def test_domain_scores_x_axis_starts_at_zero() -> None:
+    """Scores by population is a probability axis and must not show negatives."""
+    fig, ax = plt.subplots()
+    try:
+        _draw_domain_scores(ax, {
+            "bins": np.linspace(0.0, 1.0, 41).tolist(),
+            "source_hist": np.ones(40).tolist(),
+            "target_hist": np.linspace(0.0, 2.0, 40).tolist(),
+        })
+        _check(ax.get_xlim(), (0.0, 1.1), "probability x-axis")
+        _check(ax.get_ylim(), (0.0, 2.1), "count y-axis")
+    finally:
+        plt.close(fig)
+
+
+def test_domain_drivers_x_axis_starts_at_zero() -> None:
+    """SHAP-share bars start at 0 and pad the largest share by 0.1."""
+    fig, ax = plt.subplots()
+    try:
+        _draw_domain_drivers(ax, pd.DataFrame({
+            "feature": ["x1", "x2"],
+            "shap_share": [0.7, 0.3],
+        }))
+        _check(ax.get_xlim(), (0.0, 0.8), "share x-axis")
+    finally:
+        plt.close(fig)
+
+
+def test_null_panel_pads_positive_and_signed_ranges() -> None:
+    """Baseline histograms start at 0 when min is 0, and show min - 0.1 when signed."""
+    fig, ax = plt.subplots()
+    try:
+        _null_panel(ax, np.linspace(0.0, 1.0, 30), 0.8, "MMD²")
+        _check(ax.get_xlim(), (0.0, 1.1), "non-negative statistic")
+    finally:
+        plt.close(fig)
+    fig, ax = plt.subplots()
+    try:
+        _null_panel(ax, np.linspace(-0.3, 0.5, 30), 0.4, "Δ")
+        _check(ax.get_xlim(), (-0.4, 0.6), "signed statistic")
+    finally:
+        plt.close(fig)
+
+
+def _capture_plot(monkeypatch: pytest.MonkeyPatch, fn: object, *args: object) -> dict[str, object]:
+    """Axis limits from a plot function that embeds a figure.
+
+    Args:
+        monkeypatch: Pytest patcher used to intercept ``figure_html``.
+        fn: Plot function.
+        *args: Arguments forwarded to ``fn``.
+
+    Returns:
+        X and Y limits for each panel.
+    """
+    snapshot: dict[str, object] = {}
+
+    def _capture(fig: plt.Figure, alt: str, terms: str = "") -> str:
+        snapshot["xlims"] = [ax.get_xlim() for ax in fig.axes if ax.axison]
+        snapshot["ylims"] = [ax.get_ylim() for ax in fig.axes if ax.axison]
+        plt.close(fig)
+        return ""
+
+    monkeypatch.setattr("population_drift.report.figure_html", _capture)
+    fn(*args)
+    if not snapshot:
+        pytest.fail("plot did not build a figure")
+    return snapshot
+
+
+def test_category_share_axis_starts_at_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Category frequency bars are a probability axis starting at 0."""
+    run = ComparisonRun(
+        Path("."),
+        {"categorical__main": pd.DataFrame([{"feature": "c1", "cramers_v": 0.2, "psi": 0.1}])},
+        {"categorical": {"frequencies": {
+            "c1": {"levels": ["a", "b"], "source": [0.6, 0.4], "target": [0.5, 0.5]},
+        }}},
+        {"n_source": 10, "n_target": 5, "feature_types": {}, "has_model": False, "label_col": None},
+        {"signals": [], "warnings": [], "baseline_rounds": 10, "baseline_subset_size": 5},
+        pd.DataFrame(),
+        pd.DataFrame(),
+    )
+    snapshot = _capture_plot(monkeypatch, plot_categories, run, ["c1"])
+    _check(snapshot["ylims"][0], (0.0, 0.7), "share y-axis")
+
+
+def test_calibration_axes_start_at_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Calibration predicted probability and positive rate start at 0."""
+    run = ComparisonRun(
+        Path("."),
+        {"calibration__reliability": pd.DataFrame({
+            "mean_predicted": [0.2, 0.8], "observed_rate": [0.25, 0.75],
+        })},
+        {},
+        {"n_source": 10, "n_target": 5, "feature_types": {}, "has_model": True, "label_col": "y"},
+        {"signals": [], "warnings": [], "baseline_rounds": 10, "baseline_subset_size": 5},
+        pd.DataFrame(),
+        pd.DataFrame(),
+    )
+    snapshot = _capture_plot(monkeypatch, plot_calibration, run)
+    _check(snapshot["xlims"][0], (0.0, 1.1), "predicted probability")
+    _check(snapshot["ylims"][0], (0.0, 1.1), "positive rate")
 
 
 def test_psi_by_feature_axis_is_half_when_all_psi_are_at_most_half(
