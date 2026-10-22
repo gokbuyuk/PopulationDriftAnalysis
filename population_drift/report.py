@@ -6,6 +6,11 @@ Usage:
 
 The report embeds all plots (PNG, base64) and styles, so the HTML file is self-contained.
 A markdown copy is written next to it, with the same plots saved as PNG files.
+
+A comparison also writes a short decision report beside the detailed one
+(``report_short.html`` / ``report_short.md``) with the verdict, counted signals,
+flagged features, and the plots a data scientist needs to decide whether to score
+new data.
 """
 from __future__ import annotations
 
@@ -2673,6 +2678,255 @@ def _comparison_sections(run: ComparisonRun, baseline: BaselineRun | None, top_k
     return sections
 
 
+_DECISION_ACTIONS = {
+    "severe": ("Do not score the new population with this model as-is. Investigate the severe "
+               "signals, then retrain, recalibrate, or restrict scoring to in-support rows."),
+    "moderate": ("Scoring is not ruled out, but review every moderate signal before production use. "
+                 "Prefer a labelled sample check and continued monitoring."),
+    "mild": ("No severe barrier to scoring under the toolkit rule. This is not a measurement of "
+             "accuracy on the new population; keep monitoring."),
+}
+
+
+def short_report_path(output_path: str | Path) -> Path:
+    """Sibling path for the short decision report (``report.html`` → ``report_short.html``).
+
+    Args:
+        output_path: Destination of the detailed HTML report.
+
+    Returns:
+        Path with ``_short`` inserted before the suffix.
+
+    Raises:
+        ValueError: If ``output_path`` is blank.
+    """
+    if not str(output_path).strip():
+        raise ValueError("output_path is empty.")
+    path = Path(output_path)
+    suffix = path.suffix or ".html"
+    return path.with_name(f"{path.stem}_short{suffix}")
+
+
+def _decision_action(level: str) -> str:
+    """One-sentence scoring recommendation for a verdict level.
+
+    Args:
+        level: ``severe``, ``moderate``, ``mild``, or another label.
+
+    Returns:
+        Recommendation text. Unknown levels get a review-first sentence.
+    """
+    return _DECISION_ACTIONS.get(
+        level, "Review the signals below before deciding whether to score new data.")
+
+
+def _short_context(run: ComparisonRun) -> str:
+    """One-line sample and baseline sizes for the short report.
+
+    Args:
+        run: Comparison outputs.
+
+    Returns:
+        HTML paragraph of run sizes.
+    """
+    meta, decision = run.metadata, run.decision
+    types = meta["feature_types"]
+    n_cont = sum(kind == "continuous" for kind in types.values())
+    return (f"<p class='context'>Training: <b>{meta['n_source']:,}</b> · New: <b>{meta['n_target']:,}</b> · "
+            f"{len(types)} features ({n_cont} continuous) · "
+            f"Model: <b>{'yes' if meta['has_model'] else 'no'}</b> · "
+            f"Baseline: <b>{_fmt(decision.get('baseline_rounds'))}</b> × "
+            f"<b>{_fmt(decision.get('baseline_subset_size'))}</b>-row subsets</p>")
+
+
+def section_short_decision(run: ComparisonRun, detailed_name: str) -> Section:
+    """Verdict, action, and the label-free limitation.
+
+    Args:
+        run: Comparison outputs.
+        detailed_name: Filename of the detailed report sibling.
+
+    Returns:
+        Decision section for the short report.
+    """
+    decision = run.decision
+    level = decision["verdict_level"]
+    caveats = [
+        "Without labels on the new population, <b>concept shift</b> (a change in P(y|x)) cannot be "
+        "detected. Performance numbers below are estimates under stated assumptions.",
+        f"Full tables, methods, and baseline diagnostics: <code>{html.escape(detailed_name)}</code>.",
+    ]
+    caveats += [html.escape(warning) for warning in decision.get("warnings", [])]
+    body = (
+        f'<div class="verdict {level}"><div class="verdict-label">Verdict</div>'
+        f'<div class="verdict-text">{html.escape(decision["verdict"])}</div>'
+        f'<div class="verdict-rule">{html.escape(decision["verdict_rule"])}</div></div>'
+        f'{_short_context(run)}'
+        f'<div class="callout"><b>Action.</b> {html.escape(_decision_action(level))}</div>'
+        f'<h3>Limits</h3><ul>{"".join(f"<li>{item}</li>" for item in caveats)}</ul>'
+    )
+    return Section("decision", "Decision", body)
+
+
+def section_short_signals(run: ComparisonRun) -> Section:
+    """Counted signals with observed value and baseline comparison.
+
+    Args:
+        run: Comparison outputs.
+
+    Returns:
+        Signals section for the short report.
+    """
+    order = {"severe": 2, "moderate": 1, "mild": 0, "info": -1}
+    rows = "".join(
+        f"<tr><td>{_level_badge(signal['level'])}</td>"
+        f"<td>{html.escape(signal['signal'])}</td>"
+        f"<td>{html.escape(signal.get('pair') or '')}</td>"
+        f"<td>{html.escape(signal['value'])}</td>"
+        f"{_baseline_cell(signal, run)}</tr>"
+        for signal in sorted(run.decision["signals"], key=lambda item: -order[item["level"]])
+    )
+    table = (
+        '<div class="table-wrap"><table><thead><tr>'
+        "<th>Level</th><th>Signal</th><th>Pair</th><th>Observed</th><th>Baseline</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table></div>"
+    )
+    note = ("<p>A signal enters the verdict only when it is significant after multiple-testing "
+            "correction, beyond the baseline 95th percentile, and at least moderate by effect size. "
+            f"{_level_badge('mild')} noise or negligible · {_level_badge('moderate')} real, moderate · "
+            f"{_level_badge('severe')} real, large. <code>info</code> rows are reported, not counted.</p>")
+    return Section("signals", "Signals that drive the verdict", note + table)
+
+
+def _flagged_feature_frame(run: ComparisonRun) -> pd.DataFrame:
+    """Non-mild features ordered by severity then Population Stability Index (PSI).
+
+    Args:
+        run: Comparison outputs.
+
+    Returns:
+        Feature assessment rows that are not mild. May be empty.
+    """
+    features = run.features
+    flagged = features[features["severity"] != "mild"].copy()
+    if flagged.empty:
+        return flagged
+    flagged["_rank"] = flagged["severity"].map({"severe": 2, "moderate": 1}).fillna(0)
+    return flagged.sort_values(["_rank", "psi"], ascending=[False, False]).drop(columns="_rank")
+
+
+def section_short_features(run: ComparisonRun, top_k: int) -> Section | None:
+    """Flagged features, overview plot, and ECDFs or category bars for the worst cases.
+
+    Args:
+        run: Comparison outputs.
+        top_k: How many drifted features to plot.
+
+    Returns:
+        Features section, or None when the assessment table is empty.
+    """
+    if run.features.empty:
+        return None
+    if top_k < 1:
+        raise ValueError("top_k must be >= 1.")
+    counts = _feature_counts(run.features)
+    flagged = _flagged_feature_frame(run)
+    text = (f"<p><b>{counts['severe']}</b> severe, <b>{counts['moderate']}</b> moderate, "
+            f"<b>{counts['mild']}</b> mild of {len(run.features)} features. "
+            "Model-important features are the smallest TreeSHAP set reaching 80% of mean |SHAP|.</p>")
+    columns = ["feature", "type", "severity", "important", "psi", "ks_d", "smd", "cramers_v", "reasons"]
+    rename = {"ks_d": "KS D", "smd": "SMD", "cramers_v": "Cramér's V", "psi": "PSI"}
+    table = (table_html(flagged, columns, rename, level_col="severity")
+             if not flagged.empty else "<p>No feature exceeded mild.</p>")
+    names = flagged["feature"].head(top_k).tolist() if not flagged.empty else []
+    plots = plot_feature_overview(run)
+    if names:
+        types = run.features.set_index("feature")["type"]
+        continuous = [name for name in names if types.get(name) == "continuous"]
+        categorical = [name for name in names if name not in continuous]
+        plots += plot_ecdfs(run, continuous) + plot_categories(run, categorical)
+    return Section("features", "Feature evidence",
+                   _pair_line(run, "continuous", "categorical") + plots + text + table)
+
+
+def section_short_model_evidence(run: ComparisonRun, baseline: BaselineRun | None) -> Section | None:
+    """Joint separation, score drift, and label-free performance plots with key numbers.
+
+    Args:
+        run: Comparison outputs.
+        baseline: Baseline outputs, or None.
+
+    Returns:
+        Model-evidence section when any of those tasks produced output, else None.
+    """
+    parts: list[str] = []
+    domain = run.table("domain_classifier")
+    if not domain.empty or not run.table("mmd").empty or not run.table("energy").empty:
+        parts.append(plot_domain_classifier(run, baseline))
+        parts.append(_domain_paragraph(run, baseline, domain))
+        entries, rows = _kernel_results(run, baseline)
+        parts.append(plot_null_grid(entries, "Kernel tests: observed vs baseline"))
+        if rows:
+            parts.append(table_html(pd.DataFrame(rows)))
+    prediction = run.table("prediction_drift")
+    shap_summary = run.table("shap_drift", "summary")
+    if not prediction.empty or not shap_summary.empty:
+        parts.append(plot_model_outputs(run))
+        if not prediction.empty:
+            parts.append(
+                f"<p>Score PSI {_scalar(prediction, 'psi'):.3f}; KS D {_scalar(prediction, 'ks_d'):.3f}"
+                + (f"; positive rate {_pct(_scalar(prediction, 'positive_rate_source'))} → "
+                   f"<b>{_pct(_scalar(prediction, 'positive_rate_target'))}</b>"
+                   if "positive_rate_source" in prediction else "")
+                + ".</p>")
+        if not shap_summary.empty:
+            parts.append(
+                f"<p>SHAP importance rank Spearman ρ = {_scalar(shap_summary, 'importance_rank_rho'):.2f} "
+                "(below 0.80 means the ranking of reasons changed).</p>")
+    weighted, cbpe = run.table("weighted_performance"), run.table("cbpe")
+    if not weighted.empty or not cbpe.empty or not run.table("label_shift").empty:
+        parts.append(plot_performance(run) + plot_calibration(run))
+        for task, label in (("weighted_performance", "importance weighting"),
+                            ("cbpe", "confidence-based performance estimation (CBPE)")):
+            table = run.table(task)
+            if table.empty:
+                continue
+            row = table.iloc[0]
+            metric = METRIC_DISPLAY.get(str(row["metric"]), str(row["metric"]))
+            parts.append(
+                f"<p>{label}: estimated {metric} <b>{row['estimate']:.3f}</b> "
+                f"[{_fmt(row['ci_low'])}–{_fmt(row['ci_high'])}] vs reference {row['reference_value']:.3f}.</p>")
+    if not parts:
+        return None
+    return Section(
+        "model", "Model and performance evidence",
+        _pair_line(run, "domain_classifier", "prediction_drift", "weighted_performance", "cbpe") + "".join(parts),
+    )
+
+
+def _short_comparison_sections(
+        run: ComparisonRun, baseline: BaselineRun | None, top_k: int, detailed_name: str) -> list[Section]:
+    """Essential sections for a data-scientist decision report.
+
+    Args:
+        run: Comparison outputs.
+        baseline: Baseline outputs, or None.
+        top_k: Features shown in distribution plots.
+        detailed_name: Filename of the detailed report sibling.
+
+    Returns:
+        Short-report sections that have content.
+    """
+    builders = (
+        ("decision", "Decision", lambda: section_short_decision(run, detailed_name)),
+        ("signals", "Signals that drive the verdict", lambda: section_short_signals(run)),
+        ("features", "Feature evidence", lambda: section_short_features(run, top_k)),
+        ("model", "Model and performance evidence", lambda: section_short_model_evidence(run, baseline)),
+    )
+    return [section for anchor, title, builder in builders
+            if (section := _render_section(anchor, title, builder)) is not None]
+
+
 _IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I | re.S)
 _TABLE_RE = re.compile(r"<table\b.*?</table>", re.I | re.S)
 _ATTR_RE = re.compile(r'([a-zA-Z_:][-a-zA-Z0-9:._]*)="([^"]*)"')
@@ -2854,17 +3108,19 @@ def _collapse_blank(text: str) -> str:
 
 def build_report(output_path: str | Path, comparison_dir: str | Path | None = None,
                  baseline_dir: str | Path | None = None, title: str | None = None, top_k: int = 6) -> Path:
-    """Build the HTML report and a markdown copy with PNG plots.
+    """Build the detailed HTML report and, for a comparison, a short decision report.
+
+    Both the detailed and short reports also write a markdown copy with PNG plots.
 
     Args:
-        output_path: Destination HTML file.
+        output_path: Destination HTML file for the detailed report.
         comparison_dir: Output directory of ``python -m population_drift compare`` (full report).
         baseline_dir: Baseline directory; defaults to the one recorded in the comparison's decision.json.
         title: Optional report title.
         top_k: Number of features shown in distribution plots.
 
     Returns:
-        Path of the written report.
+        Path of the written detailed report.
 
     Raises:
         ValueError: If neither a comparison nor a baseline directory is provided.
@@ -2882,10 +3138,20 @@ def build_report(output_path: str | Path, comparison_dir: str | Path | None = No
         subtitle = (f"Training population ({run.metadata['n_source']:,} rows) vs new population "
                     f"({run.metadata['n_target']:,} rows) · analysis run {run.metadata['created_at']}")
         title = title or "Population drift report: is the model transferable?"
-    else:
-        sections = baseline_only_sections(baseline)
-        subtitle = f"Training population baseline · {baseline.metadata['created_at']}"
-        title = title or "Population drift baseline report"
+        detailed = write_report_files(output_path, title, subtitle, sections)
+        short_top_k = min(top_k, 3)
+        short_sections = _short_comparison_sections(run, baseline, short_top_k, Path(output_path).name)
+        write_report_files(
+            short_report_path(output_path),
+            "Population drift: decision brief",
+            subtitle,
+            short_sections,
+        )
+        return detailed
+
+    sections = baseline_only_sections(baseline)
+    subtitle = f"Training population baseline · {baseline.metadata['created_at']}"
+    title = title or "Population drift baseline report"
     return write_report_files(output_path, title, subtitle, sections)
 
 
@@ -2898,7 +3164,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--baseline", help="Baseline directory (optional with --comparison).")
     parser.add_argument(
         "--out", required=True,
-        help="Output HTML path. A markdown copy with PNG plots is written beside it.",
+        help=("Output HTML path for the detailed report. A markdown copy with PNG plots is written "
+              "beside it. A comparison also writes ``*_short.html`` / ``*_short.md``."),
     )
     parser.add_argument("--title")
     parser.add_argument("--top-k", type=int, default=6, help="Features shown in distribution plots.")
