@@ -1,4 +1,4 @@
-"""Unit tests for kernel-test and domain-classifier report plots."""
+"""Unit tests for kernel-test, domain-classifier, and feature-evidence report plots."""
 
 from __future__ import annotations
 
@@ -14,11 +14,13 @@ from population_drift.report import (
     ComparisonRun,
     _domain_classifier_figure,
     _draw_domain_drivers,
+    _half_or_unit_axis_limit,
     _kernel_interpretation,
     _kernel_panel_reading,
     _kernel_results,
     _null_panel,
     null_histogram_bins,
+    plot_feature_overview,
     section_joint,
     section_short_model_evidence,
 )
@@ -187,6 +189,154 @@ def test_domain_classifier_scores_and_auc_share_a_wide_top_row() -> None:
         _check(drivers.y0 < scores.y0, True, "drivers sit on the row below")
     finally:
         plt.close(fig)
+
+
+def _feature_run(rows: list[dict[str, object]]) -> ComparisonRun:
+    """Comparison whose feature-evidence plots use the given assessment rows.
+
+    Args:
+        rows: Feature-assessment records, including PSI and SHAP share.
+
+    Returns:
+        A comparison with an empty baseline table.
+    """
+    return ComparisonRun(
+        Path("."),
+        {},
+        {},
+        {
+            "n_source": 10, "n_target": 5, "feature_types": {},
+            "has_model": True, "label_col": None,
+        },
+        {"signals": [], "warnings": [], "baseline_rounds": 10, "baseline_subset_size": 5},
+        pd.DataFrame(rows),
+        pd.DataFrame(),
+    )
+
+
+def _overview_snapshot(monkeypatch: pytest.MonkeyPatch, run: ComparisonRun) -> dict[str, object]:
+    """Axis limits and annotation texts from ``plot_feature_overview``.
+
+    Args:
+        monkeypatch: Pytest patcher used to intercept ``figure_html``.
+        run: Comparison to plot.
+
+    Returns:
+        Titles, limits, and annotation strings for each panel.
+    """
+    snapshot: dict[str, object] = {}
+
+    def _capture(fig: plt.Figure, alt: str, terms: str = "") -> str:
+        snapshot["titles"] = [ax.get_title() for ax in fig.axes]
+        snapshot["xlims"] = [ax.get_xlim() for ax in fig.axes]
+        snapshot["ylims"] = [ax.get_ylim() for ax in fig.axes]
+        snapshot["texts"] = [[text.get_text() for text in ax.texts] for ax in fig.axes]
+        plt.close(fig)
+        return ""
+
+    monkeypatch.setattr("population_drift.report.figure_html", _capture)
+    plot_feature_overview(run)
+    if not snapshot:
+        pytest.fail("plot_feature_overview did not build a figure")
+    return snapshot
+
+
+def test_half_or_unit_axis_limit_stays_at_half_when_values_are_at_most_half() -> None:
+    """The default upper bound is 0.5, including a value of exactly 0.5."""
+    _check(_half_or_unit_axis_limit([0.0, 0.25, 0.5]), 0.5, "all values <= 0.5")
+    _check(_half_or_unit_axis_limit([]), 0.5, "empty values")
+    _check(_half_or_unit_axis_limit([np.nan]), 0.5, "non-finite values")
+
+
+def test_half_or_unit_axis_limit_opens_to_one_when_any_value_exceeds_half() -> None:
+    """Any finite value above 0.5 raises the bound to 1."""
+    _check(_half_or_unit_axis_limit([0.2, 0.5001]), 1.0, "just above 0.5")
+    _check(_half_or_unit_axis_limit([0.9, np.nan]), 1.0, "NaN is ignored")
+
+
+def test_half_or_unit_axis_limit_rejects_non_numeric_input() -> None:
+    """The bound requires a numeric sequence."""
+    with pytest.raises(TypeError, match="values"):
+        _half_or_unit_axis_limit(None)
+    with pytest.raises(TypeError, match="values"):
+        _half_or_unit_axis_limit("psi")
+
+
+def test_psi_by_feature_axis_is_half_when_all_psi_are_at_most_half(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PSI-by-feature uses [0, 0.5] when no bar exceeds 0.5."""
+    run = _feature_run([
+        {"feature": "a", "severity": "mild", "psi": 0.20, "model_importance_share": 0.1,
+         "beyond_baseline": False},
+        {"feature": "b", "severity": "moderate", "psi": 0.50, "model_importance_share": 0.2,
+         "beyond_baseline": True},
+    ])
+    snapshot = _overview_snapshot(monkeypatch, run)
+    _check(snapshot["titles"][0], "PSI by feature", "left panel title")
+    _check(snapshot["xlims"][0], (0.0, 0.5), "PSI-by-feature x-axis")
+
+
+def test_psi_by_feature_axis_is_one_when_any_psi_exceeds_half(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PSI-by-feature uses [0, 1] when any bar exceeds 0.5."""
+    run = _feature_run([
+        {"feature": "a", "severity": "mild", "psi": 0.20, "model_importance_share": 0.1,
+         "beyond_baseline": False},
+        {"feature": "b", "severity": "severe", "psi": 0.51, "model_importance_share": 0.2,
+         "beyond_baseline": True},
+    ])
+    snapshot = _overview_snapshot(monkeypatch, run)
+    _check(snapshot["xlims"][0], (0.0, 1.0), "PSI-by-feature x-axis")
+
+
+def test_psi_vs_shap_axes_use_half_or_unit_limits_independently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each scatter axis is 0.5 unless that axis has a value above 0.5."""
+    run = _feature_run([
+        {"feature": "a", "severity": "mild", "psi": 0.10, "model_importance_share": 0.20,
+         "beyond_baseline": False},
+        {"feature": "b", "severity": "moderate", "psi": 0.40, "model_importance_share": 0.60,
+         "beyond_baseline": True},
+    ])
+    snapshot = _overview_snapshot(monkeypatch, run)
+    _check(snapshot["titles"][1], "PSI vs SHAP importance", "scatter title")
+    _check(snapshot["xlims"][1], (0.0, 1.0), "SHAP importance x-axis")
+    _check(snapshot["ylims"][1], (0.0, 0.5), "PSI y-axis")
+
+
+def test_psi_vs_shap_ylim_is_one_when_psi_exceeds_half(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scatter PSI axis opens to 1 when any PSI exceeds 0.5."""
+    run = _feature_run([
+        {"feature": "a", "severity": "mild", "psi": 0.10, "model_importance_share": 0.10,
+         "beyond_baseline": False},
+        {"feature": "b", "severity": "severe", "psi": 0.70, "model_importance_share": 0.20,
+         "beyond_baseline": True},
+    ])
+    snapshot = _overview_snapshot(monkeypatch, run)
+    _check(snapshot["xlims"][1], (0.0, 0.5), "SHAP importance stays at 0.5")
+    _check(snapshot["ylims"][1], (0.0, 1.0), "PSI y-axis opens to 1")
+
+
+def test_psi_vs_shap_labels_only_features_beyond_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scatter annotations are only for features above the baseline."""
+    run = _feature_run([
+        {"feature": "drifted", "severity": "mild", "psi": 0.08, "model_importance_share": 0.10,
+         "beyond_baseline": True},
+        {"feature": "important", "severity": "moderate", "psi": 0.12, "model_importance_share": 0.80,
+         "beyond_baseline": False},
+        {"feature": "quiet", "severity": "mild", "psi": 0.02, "model_importance_share": 0.90,
+         "beyond_baseline": False},
+    ])
+    snapshot = _overview_snapshot(monkeypatch, run)
+    labels = snapshot["texts"][1]
+    _check(labels, ["drifted"], "only the beyond-baseline feature is labelled")
 
 
 def test_joint_and_short_sections_include_kernel_interpretation() -> None:

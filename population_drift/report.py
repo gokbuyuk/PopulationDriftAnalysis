@@ -1141,6 +1141,30 @@ def _attribution_share(values: pd.Series) -> pd.Series:
     return values / total
 
 
+def _half_or_unit_axis_limit(values: Any) -> float:
+    """Upper axis bound of 0.5, or 1 when any finite value exceeds 0.5.
+
+    Args:
+        values: Numeric values drawn on the axis.
+
+    Returns:
+        0.5 when every finite value is at most 0.5, else 1.0.
+
+    Raises:
+        TypeError: If ``values`` is None or cannot be coerced to a numeric array.
+    """
+    if values is None:
+        raise TypeError("values must be numeric, got None.")
+    try:
+        array = np.asarray(values, dtype=float).ravel()
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"values must be numeric, got {type(values).__name__}.") from exc
+    finite = array[np.isfinite(array)]
+    if finite.size and np.any(finite > 0.5):
+        return 1.0
+    return 0.5
+
+
 def _plot_shap_importance(ax: plt.Axes, shap: pd.DataFrame) -> None:
     """Compare training and new-population SHAP importance.
 
@@ -1164,6 +1188,51 @@ def _plot_shap_importance(ax: plt.Axes, shap: pd.DataFrame) -> None:
 # --------------------------------------------------------------------------------------
 # Plots
 # --------------------------------------------------------------------------------------
+def _plot_psi_by_feature(ax: plt.Axes, features: pd.DataFrame, p95: dict[str, float]) -> None:
+    """Horizontal PSI bars with severity colours and baseline p95 ticks.
+
+    Args:
+        ax: Panel to draw on.
+        features: Feature assessment, sorted by PSI.
+        p95: Feature name to baseline PSI threshold.
+    """
+    colors = [LEVEL_COLORS.get(level, "#999") for level in features["severity"]]
+    ax.barh(features["feature"], features["psi"], color=colors)
+    for i, feature in enumerate(features["feature"]):
+        threshold = p95.get(feature)
+        if threshold is not None and np.isfinite(threshold):
+            ax.plot([threshold] * 2, [i - 0.4, i + 0.4], color="black", lw=2)
+    ax.axvline(0.10, ls="--", color="#999", lw=1)
+    ax.axvline(0.25, ls="--", color="#444", lw=1)
+    ax.set_xlabel("PSI  (dashed 0.10 / 0.25; tick = baseline p95)")
+    ax.set_title("PSI by feature")
+    ax.set_xlim(0, _half_or_unit_axis_limit(features["psi"]))
+    _style_axes(ax)
+
+
+def _plot_psi_vs_shap(ax: plt.Axes, features: pd.DataFrame) -> None:
+    """Scatter PSI against SHAP importance; label only above-baseline features.
+
+    Args:
+        ax: Panel to draw on.
+        features: Feature assessment with PSI, SHAP share, and ``beyond_baseline``.
+    """
+    colors = [LEVEL_COLORS.get(level, "#999") for level in features["severity"]]
+    ax.scatter(features["model_importance_share"], features["psi"], c=colors, s=60, edgecolor="white")
+    for row in features.itertuples():
+        if getattr(row, "beyond_baseline", False):
+            ax.annotate(str(row.feature), (row.model_importance_share, row.psi),
+                        xytext=(4, 3), textcoords="offset points", fontsize=8)
+    ax.axhline(0.10, ls="--", color="#999", lw=1)
+    ax.axhline(0.25, ls="--", color="#444", lw=1)
+    ax.set_xlabel("SHAP importance")
+    ax.set_ylabel("PSI")
+    ax.set_title("PSI vs SHAP importance")
+    ax.set_xlim(0, _half_or_unit_axis_limit(features["model_importance_share"]))
+    ax.set_ylim(0, _half_or_unit_axis_limit(features["psi"]))
+    _style_axes(ax)
+
+
 def plot_feature_overview(run: ComparisonRun) -> str:
     """Population Stability Index (PSI) per feature (coloured by severity, baseline p95 ticks) and drift vs model importance."""
     features = run.features.dropna(subset=["psi"]).sort_values("psi")
@@ -1174,30 +1243,9 @@ def plot_feature_overview(run: ComparisonRun) -> str:
     height = max(3.5, 0.3 * len(features) + 1.2)
     fig, axes = plt.subplots(1, 2 if has_importance else 1, figsize=(13 if has_importance else 7.5, height))
     axes = np.atleast_1d(axes)
-    ax = axes[0]
-    colors = [LEVEL_COLORS.get(level, "#999") for level in features["severity"]]
-    ax.barh(features["feature"], features["psi"], color=colors)
-    for i, feature in enumerate(features["feature"]):
-        if feature in p95 and np.isfinite(p95[feature]):
-            ax.plot([p95[feature]] * 2, [i - 0.4, i + 0.4], color="black", lw=2)
-    ax.axvline(0.10, ls="--", color="#999", lw=1)
-    ax.axvline(0.25, ls="--", color="#444", lw=1)
-    ax.set_xlabel("PSI  (dashed 0.10 / 0.25; tick = baseline p95)")
-    ax.set_title("PSI by feature")
-    _style_axes(ax)
+    _plot_psi_by_feature(axes[0], features, p95)
     if has_importance:
-        ax = axes[1]
-        ax.scatter(features["model_importance_share"], features["psi"], c=colors, s=60, edgecolor="white")
-        for row in features.itertuples():
-            if row.severity != "mild" or row.model_importance_share >= features["model_importance_share"].quantile(0.75):
-                ax.annotate(row.feature, (row.model_importance_share, row.psi), xytext=(4, 3),
-                            textcoords="offset points", fontsize=8)
-        ax.axhline(0.10, ls="--", color="#999", lw=1)
-        ax.axhline(0.25, ls="--", color="#444", lw=1)
-        ax.set_xlabel("SHAP importance")
-        ax.set_ylabel("PSI")
-        ax.set_title("PSI vs SHAP importance")
-        _style_axes(ax)
+        _plot_psi_vs_shap(axes[1], features)
     _collapse_shared_text(fig, axes)
     fig.tight_layout()
     return figure_html(fig, "Feature drift overview", "PSI SHAP" if has_importance else "PSI")
