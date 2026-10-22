@@ -2727,6 +2727,62 @@ def section_model(run: ComparisonRun) -> Section | None:
                                 "model_prediction", "prediction_drift", "shap_drift")
 
 
+def _weighting_reference_estimate_item() -> str:
+    """How importance weighting builds the plot diamond and circle.
+
+    Returns:
+        One list item. The estimate is a reweighted labelled metric, not a new-row metric.
+    """
+    return (
+        "<b>Importance weighting.</b> The diamond is the unweighted metric on labelled "
+        "reference rows. The circle is the same metric after those rows are reweighted by a "
+        "domain-classifier density ratio so their feature mix matches the new population. "
+        "The bar bootstraps the labelled rows with those weights. New rows contribute "
+        "features only, not labels. Assumes covariate shift: P(y|x) unchanged."
+    )
+
+
+def _cbpe_reference_estimate_item() -> str:
+    """How confidence-based performance estimation builds the plot diamond and circle.
+
+    Returns:
+        One list item. Both points are expectations over predicted probabilities.
+    """
+    return (
+        "<b>Confidence-based performance estimation (CBPE).</b> Each score is treated as "
+        "P(y=1|x). The diamond is the expected metric if labels were drawn from the "
+        "reference predicted probabilities. The circle is the same functional on the "
+        "new predicted probabilities. The bar bootstraps the new scores. Assumes "
+        "calibrated probabilities and no concept shift. The diamond is not the labelled "
+        "(realized) metric."
+    )
+
+
+def _reference_estimate_callout(run: ComparisonRun) -> str:
+    """Explain how the Reference vs estimate plot is computed without new labels.
+
+    Args:
+        run: Comparison whose performance tables decide which methods to describe.
+
+    Returns:
+        A callout, or an empty string when neither estimator ran.
+    """
+    items: list[str] = []
+    if not run.table("weighted_performance").empty:
+        items.append(_weighting_reference_estimate_item())
+    if not run.table("cbpe").empty:
+        items.append(_cbpe_reference_estimate_item())
+    if not items:
+        return ""
+    disagree = (" If the methods disagree, treat the result as inconclusive."
+                if len(items) > 1 else "")
+    return (
+        '<div class="callout"><b>How reference and estimate are found.</b> '
+        "Neither value uses labels on the new population."
+        f"<ul>{''.join(f'<li>{item}</li>' for item in items)}</ul>{disagree}</div>"
+    )
+
+
 def section_performance(run: ComparisonRun) -> Section | None:
     """Label-free performance estimates, calibration and prior shift."""
     weighted, cbpe = run.table("weighted_performance"), run.table("cbpe")
@@ -2759,9 +2815,9 @@ def section_performance(run: ComparisonRun) -> Section | None:
     tolerance = run.metadata["config"]["performance_tolerance"]
     text = (f"<ul>{''.join(f'<li>{i}</li>' for i in items)}</ul><p>Tolerance for the primary metric: {tolerance:g} "
             f"({'relative' if run.metadata['problem_type'] == 'regression' else 'absolute area under the curve (AUC)'}). A signal is severe only "
-            "when the whole 95% confidence interval (CI) is beyond tolerance. If the methods disagree, treat the result as inconclusive.</p>")
+            "when the whole 95% confidence interval (CI) is beyond tolerance.</p>")
     note = _section_baseline(run, "effective sample size", "importance weighting", "CBPE", "BBSE", "calibration")
-    plots = plot_performance(run) + plot_calibration(run)
+    plots = plot_performance(run) + _reference_estimate_callout(run) + plot_calibration(run)
     tables = (details("Importance-weighted estimates", table_html(weighted) + table_html(summary))
               + details("Confidence-based performance estimation (CBPE) estimates", table_html(cbpe))
               + details("Calibration and prior shift", table_html(calibration) + table_html(label_shift)))
@@ -3166,7 +3222,7 @@ def section_short_model_evidence(run: ComparisonRun, baseline: BaselineRun | Non
                 "(below 0.80 means the ranking of reasons changed).</p>")
     weighted, cbpe = run.table("weighted_performance"), run.table("cbpe")
     if not weighted.empty or not cbpe.empty or not run.table("label_shift").empty:
-        parts.append(plot_performance(run) + plot_calibration(run))
+        parts.append(plot_performance(run) + _reference_estimate_callout(run) + plot_calibration(run))
         for task, label in (("weighted_performance", "importance weighting"),
                             ("cbpe", "confidence-based performance estimation (CBPE)")):
             table = run.table(task)
