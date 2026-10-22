@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import pickle
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,9 +20,11 @@ from population_drift.analysis import (
     _copy_warnings,
     load_model,
     load_model_or_skip,
+    log_input_features,
     main,
     predict_contributions,
     predict_scores,
+    prepare_model_input,
 )
 
 
@@ -350,3 +353,34 @@ def test_paired_cli_still_runs_when_the_model_cannot_be_loaded(
     _check(seen["model"] is None, True, "paired compare is called without a model")
     warnings = seen["warnings"]
     assert isinstance(warnings, list) and warnings, "load warning was not passed to paired compare."
+
+
+def test_log_input_features_names_each_table_and_the_model(caplog: pytest.LogCaptureFixture) -> None:
+    """Each dataset's columns and the model's feature names are logged."""
+    estimator, frame = _fitted_classifier()
+    with caplog.at_level(logging.INFO, logger="population_drift"):
+        log_input_features({"train": frame, "new": frame[["x"]]}, estimator)
+    _check("train columns (2): ['x', 'y']" in caplog.text, True, "train columns logged")
+    _check("new columns (1): ['x']" in caplog.text, True, "new columns logged")
+    _check("Model expects (1): ['x']" in caplog.text, True, "model features logged")
+
+
+def test_log_input_features_says_when_there_is_no_model(caplog: pytest.LogCaptureFixture) -> None:
+    """A feature-only run still lists table columns."""
+    frame = pd.DataFrame({"x": [0.0]})
+    with caplog.at_level(logging.INFO, logger="population_drift"):
+        log_input_features({"train": frame}, None)
+    _check("Model expects: (no model)" in caplog.text, True, "no-model line")
+
+
+def test_log_input_features_rejects_an_empty_table_map() -> None:
+    """At least one dataset must be provided."""
+    with pytest.raises(ValueError, match="tables is empty"):
+        log_input_features({}, None)
+
+
+def test_prepare_model_input_lists_expected_and_available_columns() -> None:
+    """A missing model column names both the expected names and the table columns."""
+    estimator, frame = _fitted_classifier()
+    with pytest.raises(ValueError, match="Model feature names: \\['x'\\]. Data columns: \\['other'\\]"):
+        prepare_model_input(pd.DataFrame({"other": [0.0]}), estimator, ["x"])
