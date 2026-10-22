@@ -1212,6 +1212,42 @@ def model_feature_names(model: Any) -> list[str] | None:
     return list(booster.feature_name()) if booster is not None else None
 
 
+def log_input_features(tables: dict[str, pd.DataFrame], model: Any | None) -> None:
+    """Log each table's columns and the feature names stored on the model.
+
+    Args:
+        tables: Mapping of dataset label (``train``, ``test``, ``new``) to frame.
+        model: Optional LightGBM estimator, Booster, or scoring wrapper.
+
+    Raises:
+        TypeError: If ``tables`` is not a dict or a value is not a DataFrame.
+        ValueError: If ``tables`` is empty or a name is blank.
+    """
+    if not isinstance(tables, dict):
+        raise TypeError(f"tables must be a dict, got {type(tables).__name__}.")
+    if not tables:
+        raise ValueError("tables is empty.")
+    for name, frame in tables.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("each table name must be a non-empty string.")
+        if not isinstance(frame, pd.DataFrame):
+            raise TypeError(f"{name} must be a pandas DataFrame, got {type(frame).__name__}.")
+        logger.info("%s columns (%d): %s", name, frame.shape[1], list(frame.columns))
+    _log_model_features(model)
+
+
+def _log_model_features(model: Any | None) -> None:
+    """Log the feature names the model was fitted on."""
+    if model is None:
+        logger.info("Model expects: (no model)")
+        return
+    expected = model_feature_names(model)
+    if expected is None:
+        logger.info("Model expects: (no feature names stored)")
+        return
+    logger.info("Model expects (%d): %s", len(expected), expected)
+
+
 def prepare_model_input(df: pd.DataFrame, model: Any, feature_cols: Sequence[str]) -> pd.DataFrame:
     """Select the model's input columns in its training order; object columns become categoricals.
 
@@ -1229,7 +1265,10 @@ def prepare_model_input(df: pd.DataFrame, model: Any, feature_cols: Sequence[str
         names = list(feature_cols)
     missing = [name for name in names if name not in df.columns]
     if missing:
-        raise ValueError(f"Model expects columns missing from the data: {missing}")
+        raise ValueError(
+            f"Model expects columns missing from the data: {missing}. "
+            f"Model feature names: {list(names)}. Data columns: {list(df.columns)}."
+        )
     frame = df[names].copy()
     for col in frame.columns:
         if isinstance(frame[col].dtype, pd.CategoricalDtype):
@@ -2639,6 +2678,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     config = DriftConfig(**config_kwargs)
 
     if args.command == "baseline":
+        log_input_features({"train": source}, model)
         baseline = build_baseline(source, features, categorical, model, args.label_col, args.n_rounds,
                                   args.subset_size, args.subset_fraction, config, args.out)
         print(format_baseline_summary(baseline))
@@ -2656,11 +2696,17 @@ def _run_compare_command(args: argparse.Namespace, source: pd.DataFrame, target:
                          sentinels: list[Any], model_error: str | None = None) -> int:
     """Compare the new population with the labelled set, or with the fit and evaluation sets."""
     run_warnings = [model_error] if model_error else []
+    evaluation = None
     if args.test:
         if args.baseline:
             logger.error("A supplied evaluation set builds one baseline per reference. Omit --baseline.")
             return 2
         evaluation = load_table(args.test, sentinels)
+    tables: dict[str, pd.DataFrame] = {"train": source, "new": target}
+    if evaluation is not None:
+        tables["test"] = evaluation
+    log_input_features(tables, model)
+    if evaluation is not None:
         run_paired_comparison(source, evaluation, target, features, categorical, model, args.label_col, config,
                               args.out, args.n_rounds, extra_warnings=run_warnings)
     else:
