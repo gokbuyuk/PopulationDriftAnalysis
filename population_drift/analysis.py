@@ -767,6 +767,41 @@ def _oof_domain_scores(features: pd.DataFrame, domain: np.ndarray, config: Drift
     return scores
 
 
+def _domain_classifier_shap_importance(
+    model: Any, features: pd.DataFrame, config: DriftConfig
+) -> pd.DataFrame:
+    """TreeSHAP feature shares for a fitted domain classifier.
+
+    Args:
+        model: Fitted LightGBM domain classifier.
+        features: Rows used to explain the classifier.
+        config: Run config; ``max_shap_rows`` caps the explanation sample.
+
+    Returns:
+        Table sorted by mean |SHAP|, with ``mean_abs_shap`` and ``shap_share``.
+
+    Raises:
+        TypeError: If ``model`` is None or ``features`` is not a DataFrame.
+        ValueError: If ``features`` has no columns.
+    """
+    if model is None:
+        raise TypeError("model is required.")
+    if not isinstance(features, pd.DataFrame):
+        raise TypeError(f"features must be a pandas DataFrame, got {type(features).__name__}.")
+    if features.shape[1] == 0:
+        raise ValueError("features must have at least one column.")
+    sample = _subsample(features, config.max_shap_rows, np.random.default_rng(config.seed))
+    mean_abs = np.abs(predict_contributions(model, sample)).mean(axis=0)
+    total = float(mean_abs.sum())
+    share = mean_abs / total if total > 0 else np.zeros_like(mean_abs)
+    table = pd.DataFrame({
+        "feature": list(features.columns),
+        "mean_abs_shap": mean_abs,
+        "shap_share": share,
+    })
+    return table.sort_values("mean_abs_shap", ascending=False, ignore_index=True)
+
+
 def classifier_two_sample_test(source: pd.DataFrame, target: pd.DataFrame, columns: Sequence[str],
                                feature_types: dict[str, str], config: DriftConfig) -> TaskResult:
     """Classifier two-sample test (adversarial validation).
@@ -774,7 +809,7 @@ def classifier_two_sample_test(source: pd.DataFrame, target: pd.DataFrame, colum
     A LightGBM classifier predicts population membership; H0 (same joint distribution) implies an
     out-of-fold AUC of 0.5. Reports AUC with stratified bootstrap CI, Mann-Whitney p-value on the
     out-of-fold scores, a permutation p-value (``n_classifier_permutations`` refits) and the features
-    driving the separation (gain importance).
+    driving the separation (TreeSHAP via ``shap.TreeExplainer``).
 
     Raises:
         ValueError: If either population has too few rows for cross-validation.
@@ -811,10 +846,7 @@ def classifier_two_sample_test(source: pd.DataFrame, target: pd.DataFrame, colum
         ci_low, ci_high = np.percentile(boot, [2.5, 97.5])
 
     full_model = _domain_classifier(config, config.seed).fit(features, domain)
-    gain = full_model.booster_.feature_importance(importance_type="gain")
-    importance = pd.DataFrame({"feature": list(features.columns), "gain": gain})
-    importance["gain_share"] = importance["gain"] / importance["gain"].sum() if importance["gain"].sum() > 0 else 0.0
-    importance = importance.sort_values("gain", ascending=False, ignore_index=True)
+    importance = _domain_classifier_shap_importance(full_model, features, config)
 
     main = pd.DataFrame([{"feature": GLOBAL_FEATURE, "auc": auc, "auc_ci_low": ci_low, "auc_ci_high": ci_high,
                           "mannwhitney_p": mw_p, "permutation_p": permutation_p,
