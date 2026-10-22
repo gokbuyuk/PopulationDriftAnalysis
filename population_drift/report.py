@@ -1040,27 +1040,8 @@ def figure_html(fig: plt.Figure, alt: str, terms: str = "") -> str:
     return f'<img class="plot" alt="{html.escape(alt)}"{listed} src="data:image/png;base64,{encoded}">'
 
 
-_UNIT_EDGE_PAD = 0.04
-
-
-def _pad_unit_edge(bound: float, data_extreme: float, edge: float) -> float:
-    """Extend past ±1 when a plotted value sits on that edge.
-
-    Args:
-        bound: Limit from ``_origin_span`` before padding.
-        data_extreme: Smallest or largest plotted value on this side.
-        edge: ``1.0`` or ``-1.0``.
-
-    Returns:
-        ``bound`` plus a buffer when data sit on ``edge``, otherwise ``bound``.
-    """
-    if np.isclose(bound, edge) and np.isclose(data_extreme, edge):
-        return edge + _UNIT_EDGE_PAD if edge > 0 else edge - _UNIT_EDGE_PAD
-    return bound
-
-
 def _origin_span(vmin: float, vmax: float) -> tuple[float, float]:
-    """Limits from 0 (or -1) to ``min(10 * extreme, ±1)``, never clipping data.
+    """Limits from the data range plus 0.1, always including 0.
 
     Args:
         vmin: Smallest plotted value.
@@ -1080,17 +1061,7 @@ def _origin_span(vmin: float, vmax: float) -> tuple[float, float]:
         raise TypeError("vmin and vmax must be numeric.") from exc
     if not np.isfinite([low, high]).all():
         raise ValueError("vmin and vmax must be finite.")
-    if low > high:
-        low, high = high, low
-    if low >= 0:
-        upper = min(high * 10.0, 1.0) if high <= 1.0 else high
-        return 0.0, _pad_unit_edge(max(upper, high), high, 1.0)
-    if high <= 0:
-        lower = max(low * 10.0, -1.0) if low >= -1.0 else low
-        return _pad_unit_edge(min(lower, low), low, -1.0), 0.0
-    lower = -1.0 if low >= -1.0 else low
-    upper = 1.0 if high <= 1.0 else high
-    return _pad_unit_edge(min(lower, low), low, -1.0), _pad_unit_edge(max(upper, high), high, 1.0)
+    return _axis_limits([low, high])
 
 
 def _axis_is_categorical(ax: plt.Axes, which: str) -> bool:
@@ -1126,10 +1097,9 @@ def _add_unit_ticks(ax: plt.Axes, which: str) -> None:
     ticks = [float(value) for value in matplotlib.ticker.MaxNLocator(nbins=4).tick_values(low, high)]
     if low <= 0.0 <= high:
         ticks.append(0.0)
-    unit_high = 1.0 + 2 * _UNIT_EDGE_PAD
-    if high <= unit_high and low <= 1.0 <= high:
+    if low <= 1.0 <= high:
         ticks.append(1.0)
-    if low >= -unit_high and low <= -1.0 <= high:
+    if low <= -1.0 <= high:
         ticks.append(-1.0)
     ticks = sorted({round(value, 10) for value in ticks if low - 1e-12 <= value <= high + 1e-12})
     (ax.set_xticks if which == "x" else ax.set_yticks)(ticks)
@@ -1288,12 +1258,12 @@ _AXIS_PAD = 0.1
 def _axis_limits(values: Any, *, probability: bool = False) -> tuple[float, float]:
     """Lower and upper bounds for a numeric plot axis.
 
-    Probability axes start at 0. Other axes use max + 0.1. Negative values extend
-    the axis to min - 0.1. A minimum of 0 keeps the origin at 0.
+    Axes use max + 0.1 and always include 0. Negative values extend to min - 0.1.
+    Probability axes never go below 0.
 
     Args:
         values: Numeric values drawn on the axis.
-        probability: If True, the lower bound is 0.
+        probability: If True, the lower bound is 0 even if ``values`` are negative.
 
     Returns:
         ``(lower, upper)``.
@@ -1312,12 +1282,8 @@ def _axis_limits(values: Any, *, probability: bool = False) -> tuple[float, floa
     if finite.size == 0:
         raise ValueError("values must contain at least one finite number.")
     low, high = float(finite.min()), float(finite.max())
-    upper = round(high + _AXIS_PAD, 10)
-    if probability:
-        return 0.0, upper
-    if np.any(finite < 0):
-        return round(low - _AXIS_PAD, 10), upper
-    if low == 0.0 or low - _AXIS_PAD < 0:
+    upper = round(max(high + _AXIS_PAD, 0.0), 10)
+    if probability or not np.any(finite < 0):
         return 0.0, upper
     return round(low - _AXIS_PAD, 10), upper
 

@@ -20,7 +20,6 @@ from population_drift.report import (
     _kernel_interpretation,
     _kernel_panel_reading,
     _kernel_results,
-    _UNIT_EDGE_PAD,
     _include_zero,
     _null_panel,
     _origin_span,
@@ -110,44 +109,23 @@ def _tick_values(ax: plt.Axes, which: str) -> list[float]:
     return [float(value) for value in ticks]
 
 
-def test_origin_span_caps_unit_positive_values_at_one() -> None:
-    """AUC-like values use [0, 1], not a zoomed-in window around 0.9."""
-    _check(_origin_span(0.72, 0.91), (0.0, 1.0), "unit positive cap")
+def test_origin_span_pads_positive_max_and_includes_zero() -> None:
+    """Positive data run from 0 to max + 0.1, not out to 1."""
+    _check(_origin_span(0.72, 0.91), (0.0, 1.01), "AUC-like values")
+    _check(_origin_span(0.003, 0.004), (0.0, 0.104), "small positive")
+    _check(_origin_span(0.5, 2.5), (0.0, 2.6), "above one")
 
 
-def test_origin_span_pads_when_data_reach_one() -> None:
-    """A value of 1 needs room past 1 so a marker on 1 is not clipped."""
-    _check(_origin_span(0.80, 1.0), (0.0, 1.0 + _UNIT_EDGE_PAD), "pad past 1")
+def test_origin_span_pads_negative_min_and_includes_zero() -> None:
+    """Negative data pad min, keep 0, and pad max when that still crosses 0."""
+    _check(_origin_span(-1.0, -0.30), (-1.1, 0.0), "includes -1")
+    _check(_origin_span(-0.8, -0.3), (-0.9, 0.0), "unit negative")
+    _check(_origin_span(-0.004, -0.003), (-0.104, 0.097), "small negative pads past 0")
 
 
-def test_origin_span_pads_when_data_reach_minus_one() -> None:
-    """A value of -1 needs room past -1 so a marker on -1 is not clipped."""
-    _check(_origin_span(-1.0, -0.30), (-1.0 - _UNIT_EDGE_PAD, 0.0), "pad past -1")
-
-
-def test_origin_span_uses_ten_times_a_small_positive_max() -> None:
-    """Brier-like values get 10× headroom, still capped at 1."""
-    _check(_origin_span(0.003, 0.004), (0.0, 0.04), "10× small positive")
-
-
-def test_origin_span_caps_unit_negative_values_at_minus_one() -> None:
-    """Negative unit-scale values use [-1, 0]."""
-    _check(_origin_span(-0.8, -0.3), (-1.0, 0.0), "unit negative cap")
-
-
-def test_origin_span_uses_ten_times_a_small_negative_min() -> None:
-    """Small negative values get 10× headroom, still capped at -1."""
-    _check(_origin_span(-0.004, -0.003), (-0.04, 0.0), "10× small negative")
-
-
-def test_origin_span_does_not_clip_values_above_one() -> None:
-    """A statistic larger than 1 still fits on the axis."""
-    _check(_origin_span(0.5, 2.5), (0.0, 2.5), "above-one data visible")
-
-
-def test_origin_span_mixed_unit_values_use_plus_minus_one() -> None:
-    """When signs mix inside [-1, 1], the axis is [-1, 1]."""
-    _check(_origin_span(-0.2, 0.5), (-1.0, 1.0), "mixed unit")
+def test_origin_span_pads_both_sides_when_signs_mix() -> None:
+    """Signed data pad min and max and still include 0."""
+    _check(_origin_span(-0.2, 0.5), (-0.3, 0.6), "mixed signs")
 
 
 def test_origin_span_rejects_non_finite_bounds() -> None:
@@ -166,21 +144,21 @@ def test_style_axes_ticks_one_and_pads_when_data_sit_on_one() -> None:
         _style_axes(ax)
         x0, x1 = ax.get_xlim()
         _check(round(x0, 6), 0.0, "starts at 0")
-        _check(round(x1, 6), round(1.0 + _UNIT_EDGE_PAD, 6), "buffer past 1")
+        _check(round(x1, 6), 1.1, "buffer past 1")
         _check(any(np.isclose(tick, 1.0) for tick in _tick_values(ax, "x")), True, "tick at 1")
     finally:
         plt.close(fig)
 
 
-def test_style_axes_sets_unit_x_limits_and_leaves_category_y() -> None:
-    """Forest-plot x goes 0→1; labelled method rows keep their y window."""
+def test_style_axes_pads_x_to_data_and_leaves_category_y() -> None:
+    """Numeric x uses min–max + 0.1 and 0; labelled rows keep their y window."""
     fig, ax = plt.subplots()
     try:
         ax.plot([0.72, 0.91], [0, 1])
         ax.set_yticks([0, 1], ["weighting", "CBPE"])
         ax.set_ylim(-0.6, 1.4)
         _style_axes(ax)
-        _check(ax.get_xlim(), (0.0, 1.0), "x is 0 to 1")
+        _check(ax.get_xlim(), (0.0, 1.01), "x is 0 to max + 0.1")
         y0, y1 = ax.get_ylim()
         _check(round(y0, 6), -0.6, "categorical y min")
         _check(round(y1, 6), 1.4, "categorical y max")
@@ -198,15 +176,19 @@ def test_include_zero_rejects_unknown_axis() -> None:
         plt.close(fig)
 
 
-def test_null_panel_x_axis_uses_zero_to_one_for_auc() -> None:
-    """An AUC baseline histogram is drawn on [0, 1], not [0.48, 0.82]."""
+def test_null_panel_x_axis_uses_data_range_with_zero_and_buffer() -> None:
+    """Kernel x-axes run from 0 through max + 0.1, not a tight window or a unit scale."""
     fig, ax = plt.subplots()
     try:
         _null_panel(ax, np.linspace(0.48, 0.58, 30), 0.82, "AUC")
-        x0, x1 = ax.get_xlim()
-        _check(round(x0, 6), 0.0, "AUC null starts at 0")
-        _check(round(x1, 6), 1.0, "AUC null ends at 1")
-        _check(any(np.isclose(tick, 1.0) for tick in _tick_values(ax, "x")), True, "tick at 1")
+        _check(ax.get_xlim(), (0.0, 0.92), "AUC includes 0 and pads the observed value")
+        _check(any(np.isclose(tick, 0.0) for tick in _tick_values(ax, "x")), True, "tick at 0")
+    finally:
+        plt.close(fig)
+    fig, ax = plt.subplots()
+    try:
+        _null_panel(ax, np.linspace(0.01, 0.04, 30), 0.05, "MMD²")
+        _check(ax.get_xlim(), (0.0, 0.15), "small MMD² pads max, still includes 0")
     finally:
         plt.close(fig)
 
@@ -394,16 +376,17 @@ def test_axis_limits_start_at_zero_for_probabilities() -> None:
     _check(_axis_limits([0.2, 0.8], probability=True), (0.0, 0.9), "min above 0 still starts at 0")
 
 
-def test_axis_limits_pad_max_and_keep_zero_when_min_is_zero() -> None:
-    """Non-probability axes use max + 0.1 and start at 0 when the minimum is 0."""
+def test_axis_limits_pad_max_and_always_include_zero() -> None:
+    """Non-probability axes use max + 0.1 and always include 0."""
     _check(_axis_limits([0.0, 0.4]), (0.0, 0.5), "min 0")
-    _check(_axis_limits([0.2, 0.5]), (0.1, 0.6), "positive min is padded")
-    _check(_axis_limits([0.05, 0.5]), (0.0, 0.6), "padding below a small min does not go negative")
+    _check(_axis_limits([0.2, 0.5]), (0.0, 0.6), "positive min still starts at 0")
+    _check(_axis_limits([0.05, 0.5]), (0.0, 0.6), "small positive min starts at 0")
 
 
 def test_axis_limits_pad_below_zero_when_values_are_negative() -> None:
-    """Negative data keeps a negative side down to min - 0.1."""
+    """Negative data keeps a negative side down to min - 0.1 and still includes 0."""
     _check(_axis_limits([-0.3, 0.5]), (-0.4, 0.6), "signed range")
+    _check(_axis_limits([-0.5, -0.2]), (-0.6, 0.0), "all-negative still includes 0")
 
 
 def test_axis_limits_rejects_invalid_input() -> None:
@@ -625,10 +608,10 @@ def test_calibration_axes_start_at_zero(monkeypatch: pytest.MonkeyPatch) -> None
     _check(snapshot["ylims"][0], (0.0, 1.1), "positive rate")
 
 
-def test_psi_by_feature_axis_is_half_when_all_psi_are_at_most_half(
+def test_psi_by_feature_axis_pads_the_largest_psi(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PSI-by-feature uses [0, 0.5] when no bar exceeds 0.5."""
+    """PSI-by-feature uses 0 to max + 0.1."""
     run = _feature_run([
         {"feature": "a", "severity": "mild", "psi": 0.20, "model_importance_share": 0.1,
          "beyond_baseline": False},
@@ -637,13 +620,13 @@ def test_psi_by_feature_axis_is_half_when_all_psi_are_at_most_half(
     ])
     snapshot = _overview_snapshot(monkeypatch, run)
     _check(snapshot["titles"][0], "PSI by feature", "left panel title")
-    _check(snapshot["xlims"][0], (0.0, 0.5), "PSI-by-feature x-axis")
+    _check(snapshot["xlims"][0], (0.0, 0.6), "PSI-by-feature x-axis")
 
 
-def test_psi_by_feature_axis_is_one_when_any_psi_exceeds_half(
+def test_psi_by_feature_axis_does_not_stretch_to_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PSI-by-feature uses [0, 1] when any bar exceeds 0.5."""
+    """A PSI just above 0.5 pads by 0.1 instead of opening to 1."""
     run = _feature_run([
         {"feature": "a", "severity": "mild", "psi": 0.20, "model_importance_share": 0.1,
          "beyond_baseline": False},
@@ -651,13 +634,13 @@ def test_psi_by_feature_axis_is_one_when_any_psi_exceeds_half(
          "beyond_baseline": True},
     ])
     snapshot = _overview_snapshot(monkeypatch, run)
-    _check(snapshot["xlims"][0], (0.0, 1.0), "PSI-by-feature x-axis")
+    _check(snapshot["xlims"][0], (0.0, 0.61), "PSI-by-feature x-axis")
 
 
-def test_psi_vs_shap_axes_use_half_or_unit_limits_independently(
+def test_psi_vs_shap_axes_pad_each_dimension(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each scatter axis is 0.5 unless that axis has a value above 0.5."""
+    """Each scatter axis is 0 to max + 0.1."""
     run = _feature_run([
         {"feature": "a", "severity": "mild", "psi": 0.10, "model_importance_share": 0.20,
          "beyond_baseline": False},
@@ -666,14 +649,14 @@ def test_psi_vs_shap_axes_use_half_or_unit_limits_independently(
     ])
     snapshot = _overview_snapshot(monkeypatch, run)
     _check(snapshot["titles"][1], "PSI vs SHAP importance", "scatter title")
-    _check(snapshot["xlims"][1], (0.0, 1.0), "SHAP importance x-axis")
+    _check(snapshot["xlims"][1], (0.0, 0.7), "SHAP importance x-axis")
     _check(snapshot["ylims"][1], (0.0, 0.5), "PSI y-axis")
 
 
-def test_psi_vs_shap_ylim_is_one_when_psi_exceeds_half(
+def test_psi_vs_shap_ylim_pads_large_psi(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The scatter PSI axis opens to 1 when any PSI exceeds 0.5."""
+    """A PSI above 0.5 pads by 0.1 instead of stretching the axis to 1."""
     run = _feature_run([
         {"feature": "a", "severity": "mild", "psi": 0.10, "model_importance_share": 0.10,
          "beyond_baseline": False},
@@ -681,8 +664,8 @@ def test_psi_vs_shap_ylim_is_one_when_psi_exceeds_half(
          "beyond_baseline": True},
     ])
     snapshot = _overview_snapshot(monkeypatch, run)
-    _check(snapshot["xlims"][1], (0.0, 0.5), "SHAP importance stays at 0.5")
-    _check(snapshot["ylims"][1], (0.0, 1.0), "PSI y-axis opens to 1")
+    _check(snapshot["xlims"][1], (0.0, 0.3), "SHAP importance x-axis")
+    _check(snapshot["ylims"][1], (0.0, 0.8), "PSI y-axis")
 
 
 def test_psi_vs_shap_labels_only_features_beyond_baseline(
