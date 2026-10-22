@@ -1555,18 +1555,18 @@ def _null_panel(ax: plt.Axes, null: np.ndarray, observed: float, title: str, per
         ax.axvline(observed, color=TARGET_COLOR, lw=2.2, label="observed")
         span.append([observed])
     ax.set_title(title, fontsize=10)
+    ax.set_ylabel("counts")
     ax.set_yticks([])
-    ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
-    ax.ticklabel_format(axis="x", style="sci", scilimits=(-3, 4))
-    ax.tick_params(axis="x", labelsize=8)
     _style_axes(ax)
     if span:
         stacked = np.concatenate(span)
         ax.set_xlim(*_axis_limits(stacked, pad=_relative_axis_pad(stacked)))
-
     heights = [patch.get_height() for patch in ax.patches]
     if heights:
         ax.set_ylim(*_axis_limits(heights))
+    _add_unit_ticks(ax, "x")
+    ax.ticklabel_format(axis="x", style="sci", scilimits=(-3, 4))
+    ax.tick_params(axis="x", labelsize=8, labelbottom=True)
 
 
 def plot_null_grid(entries: Sequence[dict[str, Any]], title: str) -> str:
