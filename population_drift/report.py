@@ -114,9 +114,19 @@ ACRONYMS: dict[str, _Acronym] = {
     "PSI": _Acronym("Population Stability Index", "Magnitudes", "Change in bin shares. Below 0.10 stable, 0.10–0.25 monitor, above 0.25 large."),
     "SMD": _Acronym("standardized mean difference", "Magnitudes", "Mean gap divided by pooled SD. Absolute SMD ≥ 0.10 small, ≥ 0.50 large."),
     "JS": _Acronym("Jensen–Shannon", "Magnitudes", "Distance between category shares. 0 means the same frequencies; larger means less overlap."),
-    "MMD": _Acronym("maximum mean discrepancy", "Magnitudes", "Kernel distance between the two samples. Larger means the joint distributions differ. Cannot be severe."),
-    "MMD²": _Acronym("squared maximum mean discrepancy", "Magnitudes", "Square of MMD, the stored number. Same reading as MMD."),
-    "RBF": _Acronym("radial basis function", "Magnitudes", "Kernel used for MMD. Bandwidth is the median distance between rows."),
+    "MMD": _Acronym(
+        "maximum mean discrepancy", "Magnitudes",
+        "Kernel distance between the two joint samples. 0 means the clouds of rows are indistinguishable under the RBF kernel; "
+        "larger means they occupy different regions of feature space. Local: nearby rows count as similar, and similarity saturates "
+        "beyond the bandwidth. Cannot be severe."),
+    "MMD²": _Acronym(
+        "squared maximum mean discrepancy", "Magnitudes",
+        "Unbiased square of MMD, the stored number. Same reading as MMD: 0 indistinguishable, larger a joint-distribution shift. "
+        "Cannot be severe."),
+    "RBF": _Acronym(
+        "radial basis function", "Magnitudes",
+        "Kernel used for MMD. Bandwidth is the median pairwise distance between rows. Rows closer than the bandwidth count as similar; "
+        "farther rows do not."),
     "ECE": _Acronym("expected calibration error", "Magnitudes", "Mean gap between predicted probability and observed rate. Above 0.05, probabilities are off and CBPE is info."),
     "ESS": _Acronym("effective sample size", "Magnitudes", "Kish ratio after weighting. Above 0.50 usable, 0.10–0.50 caution, below 0.10 the weights have collapsed."),
     "OOD": _Acronym("out-of-distribution", "Magnitudes", "Share of new rows the isolation forest calls unusual. Below 2% ordinary, 2–5% caution, above 5% material."),
@@ -151,6 +161,13 @@ _STATISTICAL_TESTS: tuple[tuple[str, str], ...] = (
      "exceeds the share expected from the training rule. Adjusted p below α: more new rows fall outside support."),
     ("Baseline empirical p", "Share of random reference splits at least as large as the new population: "
      "(1 + such rounds) / (1 + rounds). Beyond baseline means the statistic exceeds that reference's 95th percentile."),
+)
+# Magnitude statistics that have no short name. MMD, MMD², and RBF stay in the acronym table.
+_NAMED_MAGNITUDES: tuple[tuple[str, str], ...] = (
+    ("Energy distance",
+     "Euclidean distance between the two joint samples. Twice the typical training–new pair distance minus the typical "
+     "distance inside each group. 0 means indistinguishable; larger means the clouds are farther apart or have different "
+     "spreads. Reacts more to large location or scale shifts than MMD². Cannot be severe."),
 )
 _SAME_CONCEPT = {"TreeSHAP": "SHAP", "SHAP": "TreeSHAP"}
 _PHRASES: tuple[tuple[str, str], ...] = (
@@ -446,20 +463,49 @@ def _acronym_table_html(tokens: list[str]) -> str:
             f"</thead><tbody>{rows}</tbody></table></div>")
 
 
+def _two_column_table_html(headers: tuple[str, str], rows: Sequence[tuple[str, str]]) -> str:
+    """HTML table with a name column and a reading column.
+
+    Args:
+        headers: Column headings.
+        rows: ``(name, reading)`` pairs.
+
+    Returns:
+        A two-column HTML table.
+
+    Raises:
+        ValueError: If ``headers`` is not two strings or ``rows`` is empty.
+    """
+    if len(headers) != 2 or any(not isinstance(item, str) or not item for item in headers):
+        raise ValueError("headers must be two non-empty strings.")
+    if not rows:
+        raise ValueError("rows must be a non-empty sequence of name/reading pairs.")
+    left, right = headers
+    body = "".join(f"<tr><td>{html.escape(name)}</td><td>{html.escape(reading)}</td></tr>" for name, reading in rows)
+    return (f'<div class="table-wrap"><table><thead><tr><th>{html.escape(left)}</th>'
+            f"<th>{html.escape(right)}</th></tr></thead><tbody>{body}</tbody></table></div>")
+
+
 def _tests_table_html() -> str:
     """HTML table of hypothesis tests that have no short name.
 
     Returns:
         A two-column table.
     """
-    rows = "".join(f"<tr><td>{html.escape(name)}</td><td>{html.escape(reading)}</td></tr>"
-                   for name, reading in _STATISTICAL_TESTS)
-    return ('<div class="table-wrap"><table><thead><tr><th>Test</th><th>Reading</th></tr></thead>'
-            f"<tbody>{rows}</tbody></table></div>")
+    return _two_column_table_html(("Test", "Reading"), _STATISTICAL_TESTS)
+
+
+def _named_magnitudes_table_html() -> str:
+    """HTML table of magnitude statistics that have no short name.
+
+    Returns:
+        A two-column table.
+    """
+    return _two_column_table_html(("Statistic", "Reading"), _NAMED_MAGNITUDES)
 
 
 def _appendix_blocks_html(used: set[str]) -> str:
-    """Grouped acronym tables, with the tests that have no short name under Tests.
+    """Grouped acronym tables, with unnamed tests and magnitudes under those groups.
 
     Args:
         used: Short names found in the report.
@@ -474,6 +520,8 @@ def _appendix_blocks_html(used: set[str]) -> str:
         if category == "Tests":
             table += _tests_table_html()
             saw_tests = True
+        elif category == "Magnitudes":
+            table += _named_magnitudes_table_html()
         blocks.append(f"<h3>{html.escape(category)}</h3>{table}")
     if not saw_tests:
         blocks.insert(0, f"<h3>Tests</h3>{_tests_table_html()}")
@@ -659,14 +707,44 @@ def _markdown_segments(text: str) -> list[tuple[str, str]]:
     return segments
 
 
+def _markdown_two_column_table(headers: tuple[str, str], rows: Sequence[tuple[str, str]]) -> str:
+    """Markdown table with a name column and a reading column.
+
+    Args:
+        headers: Column headings.
+        rows: ``(name, reading)`` pairs.
+
+    Returns:
+        A two-column markdown table.
+
+    Raises:
+        ValueError: If ``headers`` is not two strings or ``rows`` is empty.
+    """
+    if len(headers) != 2 or any(not isinstance(item, str) or not item for item in headers):
+        raise ValueError("headers must be two non-empty strings.")
+    if not rows:
+        raise ValueError("rows must be a non-empty sequence of name/reading pairs.")
+    left, right = headers
+    body = "\n".join(f"| {name} | {reading} |" for name, reading in rows)
+    return f"\n| {left} | {right} |\n|---|---|\n{body}\n"
+
+
 def _markdown_tests_table() -> str:
     """Markdown table of hypothesis tests that have no short name.
 
     Returns:
         A two-column table.
     """
-    body = "\n".join(f"| {name} | {reading} |" for name, reading in _STATISTICAL_TESTS)
-    return f"\n| Test | Reading |\n|---|---|\n{body}\n"
+    return _markdown_two_column_table(("Test", "Reading"), _STATISTICAL_TESTS)
+
+
+def _markdown_named_magnitudes() -> str:
+    """Markdown table of magnitude statistics that have no short name.
+
+    Returns:
+        A two-column table.
+    """
+    return _markdown_two_column_table(("Statistic", "Reading"), _NAMED_MAGNITUDES)
 
 
 def _markdown_glossary(used: set[str]) -> str:
@@ -690,6 +768,8 @@ def _markdown_glossary(used: set[str]) -> str:
         if category == "Tests":
             extra = _markdown_tests_table()
             saw_tests = True
+        elif category == "Magnitudes":
+            extra = _markdown_named_magnitudes()
         parts.append(f"\n### {category}\n\n| Acronym | Meaning | Reading |\n|---|---|---|\n{body}\n{extra}")
     if not saw_tests:
         parts.insert(1, f"\n### Tests\n{_markdown_tests_table()}")
@@ -2434,6 +2514,19 @@ def _finite_float(value: Any) -> float:
     return number if np.isfinite(number) else float("nan")
 
 
+def _kernel_joint_reading() -> str:
+    """What squared maximum mean discrepancy (MMD²) and energy distance measure together.
+
+    Returns:
+        One HTML paragraph for the joint-distribution section.
+    """
+    return (
+        "<p>These distances measure whether the two clouds of rows occupy the same region of joint "
+        "feature space, not one column at a time. They do not depend on trees. Zero: indistinguishable. "
+        "Larger: the joint distributions differ. Neither can make the verdict severe.</p>"
+    )
+
+
 def _kernel_panel_reading(title: str) -> str:
     """What one kernel-test panel measures.
 
@@ -2441,15 +2534,24 @@ def _kernel_panel_reading(title: str) -> str:
         title: Short plot title, for example ``MMD²`` or ``energy``.
 
     Returns:
-        One sentence naming the distance.
+        What the distance measures and how to read a larger value.
+
+    Raises:
+        ValueError: If ``title`` is empty.
     """
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("title must be a non-empty string.")
     lowered = title.lower()
     if "mmd" in lowered:
-        return "MMD² (RBF kernel) measures whether the joint feature distributions differ."
+        return ("MMD² (RBF kernel, median-distance bandwidth) compares local neighborhoods: "
+                "new rows should sit near training rows. Similarity saturates beyond the bandwidth, "
+                "so it does not grow with how far a shift went.")
     if "energy" in lowered:
-        return ("Energy distance is a second two-sample distance on the same encoded features, "
-                "with the same visual encoding.")
-    return f"{html.escape(title)} is a two-sample distance on the joint feature distribution."
+        return ("Energy distance uses raw Euclidean geometry: a random training–new pair should be "
+                "about as far apart as a pair from the same group. It reacts more to large location "
+                "or scale shifts than MMD².")
+    return (f"{html.escape(title)} is a two-sample distance on the joint feature distribution. "
+            "Larger means the two clouds of rows occupy different regions of feature space.")
 
 
 def _kernel_panel_result(observed: float, threshold: float) -> str:
@@ -2519,7 +2621,9 @@ def _kernel_interpretation(entries: Sequence[dict[str, Any]]) -> str:
         if not isinstance(entry, dict):
             raise ValueError("entries must be a sequence of mappings.")
         paragraphs.append(_kernel_panel_paragraph(entry))
-    return "".join(paragraphs)
+    if not paragraphs:
+        return ""
+    return _kernel_joint_reading() + "".join(paragraphs)
 
 
 def section_joint(run: ComparisonRun, baseline: BaselineRun | None) -> Section | None:

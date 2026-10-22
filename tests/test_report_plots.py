@@ -15,6 +15,7 @@ from population_drift.report import (
     _domain_classifier_figure,
     _draw_domain_drivers,
     _kernel_interpretation,
+    _kernel_panel_reading,
     _kernel_results,
     _null_panel,
     null_histogram_bins,
@@ -108,14 +109,29 @@ def test_null_panel_draws_at_least_40_bars() -> None:
         plt.close(fig)
 
 
+def test_kernel_panel_reading_states_what_each_distance_measures() -> None:
+    """MMD² is a local kernel distance; energy distance is Euclidean geometry."""
+    mmd = _kernel_panel_reading("MMD²")
+    energy = _kernel_panel_reading("energy")
+    _check("local neighborhoods" in mmd, True, "MMD² neighborhood reading")
+    _check("saturates beyond the bandwidth" in mmd, True, "RBF saturation")
+    _check("Euclidean" in energy, True, "energy geometry")
+    _check("same group" in energy, True, "within-group vs between-group distances")
+    with pytest.raises(ValueError, match="title"):
+        _kernel_panel_reading("  ")
+
+
 def test_kernel_interpretation_has_one_paragraph_per_plot() -> None:
-    """Each kernel panel gets its own reading of the histogram, threshold, and observed line."""
+    """Shared joint reading, then one histogram paragraph per kernel panel."""
     run, baseline = _domain_run()
     entries, _rows = _kernel_results(run, baseline)
     text = _kernel_interpretation(entries)
-    _check(text.count("<p>"), 2, "one paragraph per kernel plot")
+    _check(text.count("<p>"), 3, "shared reading plus one paragraph per kernel plot")
+    _check("joint feature space" in text, True, "what both distances measure")
     _check("MMD²" in text, True, "MMD² panel")
     _check("energy" in text.lower(), True, "energy panel")
+    _check("local neighborhoods" in text, True, "MMD² reading")
+    _check("Euclidean" in text, True, "energy reading")
     _check("grey" in text.lower() or "gray" in text.lower(), True, "baseline histogram colour")
     _check("95th" in text, True, "baseline percentile")
     _check("exceeds sampling noise" in text, True, "MMD² is beyond the percentile")
@@ -182,6 +198,8 @@ def test_joint_and_short_sections_include_kernel_interpretation() -> None:
         pytest.fail("expected joint and model-evidence sections")
     _check("exceeds sampling noise" in joint.body, True, "detailed joint interpretation")
     _check("exceeds sampling noise" in short.body, True, "short model-evidence interpretation")
+    _check("local neighborhoods" in joint.body, True, "MMD² reading in detailed report")
+    _check("Euclidean" in short.body, True, "energy reading in short report")
     _check("Separated masses" in joint.body or "score plot overlays" in joint.body, True,
            "scores-by-population reading")
     _check("AUC panel" in joint.body, True, "AUC vs baseline reading")
