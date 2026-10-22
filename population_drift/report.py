@@ -10,7 +10,9 @@ A markdown copy is written next to it, with the same plots saved as PNG files.
 A comparison also writes a short decision report beside the detailed one
 (``report_short.html`` / ``report_short.md``) with the verdict, counted signals,
 flagged features, and the plots a data scientist needs to decide whether to score
-new data.
+new data. It writes the stakeholder report as ``report_expectation.html`` /
+``report_expectation.md``: whether estimated performance stays inside the
+tolerance, with the feature shifts that can explain that result.
 """
 from __future__ import annotations
 
@@ -3166,8 +3168,10 @@ th,td{border:1px solid var(--border);padding:.35rem .5rem;text-align:left;vertic
 position:sticky;top:0}tbody tr:nth-child(even){background:#fafbfc}td.wide{min-width:280px}
 .badge{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.75rem;font-weight:600;color:#fff}
 .badge.mild{background:#16a34a}.badge.moderate{background:#d97706}.badge.severe{background:#dc2626}.badge.info{background:#64748b}
-.verdict{border-radius:10px;padding:1rem 1.3rem;color:#fff;margin-bottom:1rem}.verdict.mild{background:#15803d}
-.verdict.moderate{background:#b45309}.verdict.severe{background:#b91c1c}.verdict.info{background:#475569}
+.verdict{border-radius:10px;padding:1rem 1.3rem;color:#fff;margin-bottom:1rem}.verdict.mild,.verdict.within{background:#15803d}
+.verdict.moderate,.verdict.imprecise{background:#b45309}
+.verdict.severe,.verdict.outside{background:#b91c1c}
+.verdict.info,.verdict.not_identified{background:#475569}
 .verdict-label{text-transform:uppercase;font-size:.75rem;letter-spacing:.08em;opacity:.85}
 .verdict-text{font-size:1.4rem;font-weight:700}.verdict-rule{font-size:.85rem;opacity:.9;margin-top:.3rem}
 .context{color:var(--muted);font-size:.9rem}.muted{color:var(--muted)}
@@ -3677,9 +3681,10 @@ def _collapse_blank(text: str) -> str:
 
 def build_report(output_path: str | Path, comparison_dir: str | Path | None = None,
                  baseline_dir: str | Path | None = None, title: str | None = None, top_k: int = 6) -> Path:
-    """Build the detailed HTML report and, for a comparison, a short decision report.
+    """Build the detailed HTML report and, for a comparison, the short and expectation reports.
 
-    Both the detailed and short reports also write a markdown copy with PNG plots.
+    Each report also writes a markdown copy with PNG plots. The expectation report
+    is the page to show stakeholders: estimated performance against the pre-set tolerance.
 
     Args:
         output_path: Destination HTML file for the detailed report.
@@ -3716,6 +3721,8 @@ def build_report(output_path: str | Path, comparison_dir: str | Path | None = No
             subtitle,
             short_sections,
         )
+        from population_drift.expectation_report import write_expectation_report
+        write_expectation_report(output_path, run, Path(output_path).name)
         return detailed
 
     sections = baseline_only_sections(baseline)
@@ -3734,7 +3741,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--out", required=True,
         help=("Output HTML path for the detailed report. A markdown copy with PNG plots is written "
-              "beside it. A comparison also writes ``*_short.html`` / ``*_short.md``."),
+              "beside it. A comparison also writes ``*_short`` and ``*_expectation`` copies."),
     )
     parser.add_argument("--title")
     parser.add_argument("--top-k", type=int, default=6, help="Features shown in distribution plots.")

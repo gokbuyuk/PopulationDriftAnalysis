@@ -152,6 +152,7 @@ class DriftConfig:
     decision_threshold: float = 0.5
     problem_type: str = "binary"
     performance_tolerance: float = 0.02
+    rate_tolerance: float | None = None
     seed: int = 42
     n_jobs: int = -1
     thresholds: Thresholds = field(default_factory=Thresholds)
@@ -177,6 +178,8 @@ class DriftConfig:
             raise ValueError(f"weight_clip_quantile must be in (0.5, 1], got {self.weight_clip_quantile}.")
         if self.performance_tolerance < 0:
             raise ValueError("performance_tolerance must be >= 0.")
+        if self.rate_tolerance is not None and self.rate_tolerance < 0:
+            raise ValueError("rate_tolerance must be >= 0.")
 
     def for_baseline(self) -> "DriftConfig":
         """Copy without bootstrap/permutation inference; baseline rounds only need the statistics."""
@@ -2688,6 +2691,8 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--n-classifier-permutations", type=int, default=20)
     compare.add_argument("--performance-tolerance", type=float, default=0.02,
                          help="Acceptable AUC drop (binary) or relative error increase (regression).")
+    compare.add_argument("--rate-tolerance", type=float, default=None,
+                         help="Absolute band around the reference operating rate. Omit to show the rate without using it in the expectation headline.")
     return parser
 
 
@@ -2706,7 +2711,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "compare":
         config_kwargs.update({"n_bootstrap": args.n_bootstrap, "n_permutations": args.n_permutations,
                               "n_classifier_permutations": args.n_classifier_permutations,
-                              "performance_tolerance": args.performance_tolerance})
+                              "performance_tolerance": args.performance_tolerance,
+                              "rate_tolerance": args.rate_tolerance})
     config = DriftConfig(**config_kwargs)
 
     if args.command == "baseline":
