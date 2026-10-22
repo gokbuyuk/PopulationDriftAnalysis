@@ -17,7 +17,9 @@ from population_drift.report import (
     _kernel_interpretation,
     _kernel_panel_reading,
     _kernel_results,
+    _include_zero,
     _null_panel,
+    _style_axes,
     null_histogram_bins,
     section_joint,
     section_short_model_evidence,
@@ -81,6 +83,63 @@ def _domain_run() -> tuple[ComparisonRun, BaselineRun]:
         {},
     )
     return run, baseline
+
+
+def _axis_includes_zero(limits: tuple[float, float]) -> bool:
+    """Whether a (low, high) axis interval contains 0, including inverted axes.
+
+    Args:
+        limits: ``(left, right)`` or ``(bottom, top)`` from Matplotlib.
+
+    Returns:
+        True when 0 lies on the closed interval.
+    """
+    low, high = limits
+    return min(low, high) <= 0 <= max(low, high)
+
+
+def test_style_axes_includes_zero_when_all_values_are_positive() -> None:
+    """A series above 0 still shows the origin on both axes."""
+    fig, ax = plt.subplots()
+    try:
+        ax.plot([0.72, 0.80, 0.91], [0.20, 0.31, 0.44])
+        _style_axes(ax)
+        _check(_axis_includes_zero(ax.get_xlim()), True, "x includes 0 when data are positive")
+        _check(_axis_includes_zero(ax.get_ylim()), True, "y includes 0 when data are positive")
+    finally:
+        plt.close(fig)
+
+
+def test_style_axes_includes_zero_when_all_values_are_negative() -> None:
+    """A series below 0 still shows the origin on both axes."""
+    fig, ax = plt.subplots()
+    try:
+        ax.plot([-0.91, -0.80, -0.72], [-0.44, -0.31, -0.20])
+        _style_axes(ax)
+        _check(_axis_includes_zero(ax.get_xlim()), True, "x includes 0 when data are negative")
+        _check(_axis_includes_zero(ax.get_ylim()), True, "y includes 0 when data are negative")
+    finally:
+        plt.close(fig)
+
+
+def test_include_zero_rejects_unknown_axis() -> None:
+    """Only x and y can be expanded to the origin."""
+    fig, ax = plt.subplots()
+    try:
+        with pytest.raises(ValueError, match="which"):
+            _include_zero(ax, "z")
+    finally:
+        plt.close(fig)
+
+
+def test_null_panel_x_axis_includes_zero_for_a_shifted_baseline() -> None:
+    """Baseline histograms of strictly positive statistics still start at 0."""
+    fig, ax = plt.subplots()
+    try:
+        _null_panel(ax, np.linspace(0.48, 0.58, 30), 0.82, "AUC")
+        _check(_axis_includes_zero(ax.get_xlim()), True, "AUC null x-axis includes 0")
+    finally:
+        plt.close(fig)
 
 
 def test_null_histogram_bins_is_at_least_40() -> None:

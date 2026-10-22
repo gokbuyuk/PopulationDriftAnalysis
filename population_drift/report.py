@@ -1040,9 +1040,47 @@ def figure_html(fig: plt.Figure, alt: str, terms: str = "") -> str:
     return f'<img class="plot" alt="{html.escape(alt)}"{listed} src="data:image/png;base64,{encoded}">'
 
 
+def _include_zero(ax: plt.Axes, which: str) -> None:
+    """Expand one axis so 0 is visible even when the data do not cross it.
+
+    Args:
+        ax: Axes whose limits are already set from the plotted data.
+        which: ``x`` or ``y``.
+
+    Raises:
+        TypeError: If ``ax`` is not a Matplotlib axes.
+        ValueError: If ``which`` is not ``x`` or ``y``.
+    """
+    if not isinstance(ax, plt.Axes):
+        raise TypeError(f"ax must be matplotlib Axes, got {type(ax).__name__}.")
+    if which not in ("x", "y"):
+        raise ValueError(f"which must be 'x' or 'y', got {which!r}.")
+    getter = ax.get_xlim if which == "x" else ax.get_ylim
+    setter = ax.set_xlim if which == "x" else ax.set_ylim
+    low, high = getter()
+    if not np.isfinite([low, high]).all():
+        return
+    if low <= high:
+        setter(min(low, 0.0), max(high, 0.0))
+        return
+    setter(max(low, 0.0), min(high, 0.0))
+
+
 def _style_axes(ax: plt.Axes) -> None:
+    """Hide the top and right spines, add a light grid, and keep 0 on both axes.
+
+    Args:
+        ax: Panel to style.
+
+    Raises:
+        TypeError: If ``ax`` is not a Matplotlib axes.
+    """
+    if not isinstance(ax, plt.Axes):
+        raise TypeError(f"ax must be matplotlib Axes, got {type(ax).__name__}.")
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="both", alpha=0.25)
+    _include_zero(ax, "x")
+    _include_zero(ax, "y")
 
 
 def _as_grid(axes: Any) -> np.ndarray:
