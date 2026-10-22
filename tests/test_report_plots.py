@@ -224,6 +224,16 @@ def test_null_panel_shows_x_tick_labels_inside_the_padded_window() -> None:
         plt.close(fig)
 
 
+def test_null_panel_labels_y_as_baseline_rounds() -> None:
+    """Bar height is how many baseline rounds fell in that statistic bin."""
+    fig, ax = plt.subplots()
+    try:
+        _null_panel(ax, np.linspace(0.01, 0.04, 30), 0.05, "MMD²")
+        _check(ax.get_ylabel(), "baseline rounds", "y-axis label")
+    finally:
+        plt.close(fig)
+
+
 def test_null_histogram_bins_is_at_least_40() -> None:
     """A 30-round baseline uses 40 bins, not the old n/2 cap of 15."""
     _check(null_histogram_bins(30), 40, "30 baseline values")
