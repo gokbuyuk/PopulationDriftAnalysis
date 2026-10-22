@@ -1,0 +1,160 @@
+"""Unit tests for kernel-test and domain-classifier report plots."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pytest
+
+from population_drift.report import (
+    BaselineRun,
+    ComparisonRun,
+    _domain_classifier_figure,
+    _kernel_interpretation,
+    _kernel_results,
+    _null_panel,
+    null_histogram_bins,
+    section_joint,
+    section_short_model_evidence,
+)
+
+
+def _check(actual: object, expected: object, what: str) -> None:
+    """Fail with the comparison that did not hold."""
+    if actual != expected:
+        pytest.fail(f"{what}: got {actual!r}, expected {expected!r}.")
+
+
+def _domain_run() -> tuple[ComparisonRun, BaselineRun]:
+    """Comparison and baseline with domain-classifier and kernel-test outputs."""
+    bins = np.linspace(0.0, 1.0, 41)
+    tables = {
+        "domain_classifier__main": pd.DataFrame([{
+            "feature": "__global__", "auc": 0.82, "auc_ci_low": 0.80, "auc_ci_high": 0.84,
+            "permutation_p": 0.01,
+        }]),
+        "domain_classifier__importance": pd.DataFrame([
+            {"feature": "x1", "gain_share": 0.6},
+            {"feature": "x2", "gain_share": 0.4},
+        ]),
+        "mmd__main": pd.DataFrame([{
+            "mmd2": 0.05, "permutation_p": 0.01, "n_source_rows": 100, "n_target_rows": 80,
+        }]),
+        "energy__main": pd.DataFrame([{
+            "energy_distance": 0.02, "permutation_p": 0.40, "n_source_rows": 100, "n_target_rows": 80,
+        }]),
+    }
+    run = ComparisonRun(
+        Path("."),
+        tables,
+        {
+            "domain_classifier": {
+                "bins": bins.tolist(),
+                "source_hist": np.ones(40).tolist(),
+                "target_hist": np.linspace(0.0, 2.0, 40).tolist(),
+            },
+        },
+        {
+            "n_source": 100, "n_target": 80, "feature_types": {"x1": "continuous"},
+            "has_model": True, "label_col": "y", "config": {"alpha": 0.05, "thresholds": {}},
+        },
+        {"signals": [], "warnings": [], "baseline_rounds": 30, "baseline_subset_size": 80},
+        pd.DataFrame(),
+        pd.DataFrame(),
+    )
+    baseline = BaselineRun(
+        Path("."),
+        pd.DataFrame([
+            *[{"task": "domain_classifier", "metric": "auc", "feature": "__global__", "value": value}
+              for value in np.linspace(0.48, 0.58, 30)],
+            *[{"task": "mmd", "metric": "mmd2", "feature": "__global__", "value": value}
+              for value in np.linspace(0.001, 0.01, 30)],
+            *[{"task": "energy", "metric": "energy_distance", "feature": "__global__", "value": value}
+              for value in np.linspace(0.01, 0.03, 30)],
+        ]),
+        pd.DataFrame(),
+        {},
+    )
+    return run, baseline
+
+
+def test_null_histogram_bins_is_at_least_40() -> None:
+    """A 30-round baseline uses 40 bins, not the old n/2 cap of 15."""
+    _check(null_histogram_bins(30), 40, "30 baseline values")
+    _check(null_histogram_bins(10), 40, "fewer values still use the floor")
+    _check(null_histogram_bins(80), 60, "large baselines are capped")
+    _check(null_histogram_bins(0), 40, "empty null uses the floor")
+
+
+def test_null_histogram_bins_rejects_invalid_counts() -> None:
+    """Bin count requires a non-negative integer."""
+    with pytest.raises(ValueError, match="n_values"):
+        null_histogram_bins(-1)
+    with pytest.raises(ValueError, match="n_values"):
+        null_histogram_bins(True)
+
+
+def test_null_panel_draws_at_least_40_bars() -> None:
+    """Kernel-test histograms are granular enough that bars are not wide blocks."""
+    fig, ax = plt.subplots()
+    try:
+        _null_panel(ax, np.linspace(0.0, 1.0, 30), 0.8, "MMD²")
+        _check(len(ax.patches) >= 40, True, f"bar count {len(ax.patches)}")
+    finally:
+        plt.close(fig)
+
+
+def test_kernel_interpretation_has_one_paragraph_per_plot() -> None:
+    """Each kernel panel gets its own reading of the histogram, threshold, and observed line."""
+    run, baseline = _domain_run()
+    entries, _rows = _kernel_results(run, baseline)
+    text = _kernel_interpretation(entries)
+    _check(text.count("<p>"), 2, "one paragraph per kernel plot")
+    _check("MMD²" in text, True, "MMD² panel")
+    _check("energy" in text.lower(), True, "energy panel")
+    _check("grey" in text.lower() or "gray" in text.lower(), True, "baseline histogram colour")
+    _check("95th" in text, True, "baseline percentile")
+    _check("exceeds sampling noise" in text, True, "MMD² is beyond the percentile")
+    _check("consistent with sampling noise" in text, True, "energy is inside the percentile")
+
+
+def test_kernel_interpretation_rejects_non_mapping_entries() -> None:
+    """Entries must be mappings with title, null, and observed."""
+    with pytest.raises(ValueError, match="entries"):
+        _kernel_interpretation("not a sequence of dicts")  # type: ignore[arg-type]
+
+
+def test_domain_classifier_scores_and_auc_share_a_wide_top_row() -> None:
+    """Scores by population and AUC vs baseline each take about half the figure width."""
+    run, baseline = _domain_run()
+    fig = _domain_classifier_figure(run, baseline)
+    if fig is None:
+        pytest.fail("domain-classifier figure was not built")
+    try:
+        fig.canvas.draw()
+        scores, auc = fig.axes[0].get_position(), fig.axes[1].get_position()
+        _check(abs(scores.y0 - auc.y0) < 0.08, True, "scores and AUC on the same row")
+        _check(scores.width > 0.35, True, f"scores width {scores.width:.3f}")
+        _check(auc.width > 0.35, True, f"AUC width {auc.width:.3f}")
+        drivers = fig.axes[2].get_position()
+        _check(drivers.width > 0.70, True, f"drivers width {drivers.width:.3f}")
+        _check(drivers.y0 < scores.y0, True, "drivers sit on the row below")
+    finally:
+        plt.close(fig)
+
+
+def test_joint_and_short_sections_include_kernel_interpretation() -> None:
+    """Detailed and short reports both explain the kernel-test panels."""
+    run, baseline = _domain_run()
+    joint = section_joint(run, baseline)
+    short = section_short_model_evidence(run, baseline)
+    if joint is None or short is None:
+        pytest.fail("expected joint and model-evidence sections")
+    _check("exceeds sampling noise" in joint.body, True, "detailed joint interpretation")
+    _check("exceeds sampling noise" in short.body, True, "short model-evidence interpretation")
+    _check("Separated masses" in joint.body or "score plot overlays" in joint.body, True,
+           "scores-by-population reading")
+    _check("AUC panel" in joint.body, True, "AUC vs baseline reading")
