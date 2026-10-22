@@ -125,7 +125,7 @@ ACRONYMS: dict[str, _Acronym] = {
     "AUC": _Acronym("area under the curve", "Scores", "Area under the ROC curve. 0.5 means no separation. Domain classifier: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe."),
     "ROC": _Acronym("receiver operating characteristic", "Scores", "True-positive rate against false-positive rate across cutoffs. AUC is its area."),
     "SHAP": _Acronym("Shapley additive explanations", "Scores", "A feature's additive contribution to one score. Mean absolute SHAP rank correlation below 0.80: the ranking of reasons changed."),
-    "TreeSHAP": _Acronym("Shapley additive explanations from trees", "Scores", "SHAP for a tree model, from LightGBM pred_contrib."),
+    "TreeSHAP": _Acronym("Shapley additive explanations from trees", "Scores", "SHAP for a tree model, from shap.TreeExplainer."),
     "OOF": _Acronym("out-of-fold", "Scores", "Score from a model that did not train on that row."),
     "CBPE": _Acronym("confidence-based performance estimation", "Estimates", "Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores."),
     "BBSE": _Acronym("black-box shift estimation", "Estimates", "Estimated new class prior. Usable only if P(x given y) is unchanged."),

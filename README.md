@@ -185,7 +185,7 @@ paired = pdrift.run_paired_comparison(
 | Acronym | Meaning | Reading |
 |---|---|---|
 | AUC | area under the curve | Area under the ROC curve. 0.5 means no separation. Domain classifier: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe. |
-| TreeSHAP | Shapley additive explanations from trees | SHAP for a tree model, from LightGBM pred_contrib. |
+| TreeSHAP | Shapley additive explanations from trees | SHAP for a tree model, from `shap.TreeExplainer`. |
 
 ### Estimates
 
