@@ -107,6 +107,25 @@ def _tick_values(ax: plt.Axes, which: str) -> list[float]:
     return [float(value) for value in ticks]
 
 
+def _visible_x_tick_labels(ax: plt.Axes) -> list[str]:
+    """Non-empty x tick labels whose positions sit inside the current xlim.
+
+    Args:
+        ax: Axes to read after a canvas draw.
+
+    Returns:
+        Label strings in axis order.
+    """
+    x0, x1 = ax.get_xlim()
+    labels: list[str] = []
+    for tick in ax.get_xticklabels():
+        text = tick.get_text().strip()
+        x = tick.get_position()[0]
+        if text and tick.get_visible() and x0 - 1e-12 <= x <= x1 + 1e-12:
+            labels.append(text)
+    return labels
+
+
 def test_origin_span_pads_positive_max_and_includes_zero() -> None:
     """Positive data run from 0 to max + 0.1, not out to 1."""
     _check(_origin_span(0.72, 0.91), (0.0, 1.01), "AUC-like values")
@@ -187,6 +206,20 @@ def test_null_panel_x_axis_uses_data_range_with_zero_and_buffer() -> None:
     try:
         _null_panel(ax, np.linspace(0.01, 0.04, 30), 0.05, "MMD²")
         _check(ax.get_xlim(), (0.0, 0.0525), "small MMD² pads 5% of max")
+    finally:
+        plt.close(fig)
+
+
+def test_null_panel_shows_x_tick_labels_inside_the_padded_window() -> None:
+    """Kernel histograms label several x ticks in the final 5% padded range."""
+    fig, ax = plt.subplots()
+    try:
+        _null_panel(ax, np.linspace(0.01, 0.04, 30), 0.05, "MMD²")
+        fig.canvas.draw()
+        labels = _visible_x_tick_labels(ax)
+        _check(len(labels) >= 3, True, f"x tick labels {labels}")
+        numeric = [float(text.replace("−", "-")) for text in labels]
+        _check(any(np.isclose(value, 0.0) for value in numeric), True, "label at 0")
     finally:
         plt.close(fig)
 
