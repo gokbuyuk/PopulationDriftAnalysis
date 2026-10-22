@@ -1197,10 +1197,33 @@ def plot_missingness(run: ComparisonRun) -> str:
     return figure_html(fig, "Missing rates")
 
 
+_NULL_HIST_MIN_BINS = 40
+_NULL_HIST_MAX_BINS = 60
+
+
+def null_histogram_bins(n_values: int) -> int:
+    """Number of equal-width bins for a baseline-null histogram.
+
+    Args:
+        n_values: Count of finite baseline draws.
+
+    Returns:
+        Bin count in ``[_NULL_HIST_MIN_BINS, _NULL_HIST_MAX_BINS]``.
+
+    Raises:
+        ValueError: If ``n_values`` is not a non-negative integer.
+    """
+    if isinstance(n_values, bool) or not isinstance(n_values, (int, np.integer)) or n_values < 0:
+        raise ValueError(f"n_values must be a non-negative integer, got {n_values!r}.")
+    if n_values == 0:
+        return _NULL_HIST_MIN_BINS
+    return int(min(_NULL_HIST_MAX_BINS, max(_NULL_HIST_MIN_BINS, n_values)))
+
+
 def _null_panel(ax: plt.Axes, null: np.ndarray, observed: float, title: str, percentile: float = 95) -> None:
     """Histogram of baseline values with the observed value and the baseline threshold."""
     if len(null):
-        ax.hist(null, bins=min(20, max(5, len(null) // 2)), color="#94a3b8", edgecolor="white")
+        ax.hist(null, bins=null_histogram_bins(len(null)), color="#94a3b8", edgecolor="white")
         threshold = np.percentile(null, percentile)
         ax.axvline(threshold, color="black", ls="--", lw=1, label=f"baseline p{percentile:.0f}")
     if np.isfinite(observed):
@@ -1234,31 +1257,70 @@ def plot_null_grid(entries: Sequence[dict[str, Any]], title: str) -> str:
     return figure_html(fig, title, terms)
 
 
-def plot_domain_classifier(run: ComparisonRun, baseline: BaselineRun | None) -> str:
-    """Domain-classifier score distributions, area under the curve (AUC) vs baseline null, and separation drivers."""
+def _draw_domain_scores(ax: plt.Axes, data: dict[str, Any]) -> None:
+    """Overlay training and new-population domain-classifier score histograms.
+
+    Args:
+        ax: Panel to draw on.
+        data: Plot payload with ``bins``, ``source_hist``, and ``target_hist``.
+    """
+    centers = (np.array(data["bins"][:-1]) + np.array(data["bins"][1:])) / 2
+    width = data["bins"][1] - data["bins"][0]
+    ax.bar(centers, data["source_hist"], width, color=SOURCE_COLOR, alpha=0.55, label="training")
+    ax.bar(centers, data["target_hist"], width, color=TARGET_COLOR, alpha=0.55, label="new")
+    ax.set_xlabel("OOF P(new | x)")
+    ax.set_title("Scores by population", fontsize=10)
+    ax.legend(frameon=False, fontsize=8)
+    _style_axes(ax)
+
+
+def _draw_domain_drivers(ax: plt.Axes, importance: pd.DataFrame) -> None:
+    """Horizontal gain-share bars for the features that separate the populations.
+
+    Args:
+        ax: Panel to draw on.
+        importance: Domain-classifier importance table, lowest gain at the top.
+    """
+    ax.barh(importance["feature"], importance["gain_share"], color="#475569")
+    ax.set_xlabel("gain share")
+    ax.set_title("Separation drivers", fontsize=10)
+    _style_axes(ax)
+
+
+def _domain_classifier_figure(run: ComparisonRun, baseline: BaselineRun | None) -> plt.Figure | None:
+    """Build the domain-classifier figure: wide score and AUC panels, drivers below.
+
+    Args:
+        run: Comparison with domain-classifier plot data and tables.
+        baseline: Baseline run, or None when no AUC null is stored.
+
+    Returns:
+        The figure, or None when the classifier table or plot payload is missing.
+    """
     data = run.plot_data.get("domain_classifier")
     main = run.table("domain_classifier")
     if not data or main.empty:
-        return ""
+        return None
     importance = run.table("domain_classifier", "importance").head(10).iloc[::-1]
-    fig, axes = plt.subplots(1, 3, figsize=(14, 3.6))
-    centers = (np.array(data["bins"][:-1]) + np.array(data["bins"][1:])) / 2
-    width = data["bins"][1] - data["bins"][0]
-    axes[0].bar(centers, data["source_hist"], width, color=SOURCE_COLOR, alpha=0.55, label="training")
-    axes[0].bar(centers, data["target_hist"], width, color=TARGET_COLOR, alpha=0.55, label="new")
-    axes[0].set_xlabel("OOF P(new | x)")
-    axes[0].set_title("Scores by population", fontsize=10)
-    axes[0].legend(frameon=False, fontsize=8)
-    _style_axes(axes[0])
+    has_drivers = not importance.empty
+    fig = plt.figure(figsize=(14.5, 7.2 if has_drivers else 3.8), layout="constrained")
+    grid = fig.add_gridspec(2 if has_drivers else 1, 2, hspace=0.12, wspace=0.08)
+    ax_scores = fig.add_subplot(grid[0, 0])
+    ax_auc = fig.add_subplot(grid[0, 1])
+    _draw_domain_scores(ax_scores, data)
     null = baseline.null("domain_classifier", "auc") if baseline else np.array([])
-    _null_panel(axes[1], null, _scalar(main, "auc"), f"AUC {_scalar(main, 'auc'):.3f} vs baseline")
-    axes[1].legend(frameon=False, fontsize=7)
-    axes[2].barh(importance["feature"], importance["gain_share"], color="#475569")
-    axes[2].set_xlabel("gain share")
-    axes[2].set_title("Separation drivers", fontsize=10)
-    _style_axes(axes[2])
-    _collapse_shared_text(fig, axes)
-    fig.tight_layout()
+    _null_panel(ax_auc, null, _scalar(main, "auc"), f"AUC {_scalar(main, 'auc'):.3f} vs baseline")
+    ax_auc.legend(frameon=False, fontsize=7)
+    if has_drivers:
+        _draw_domain_drivers(fig.add_subplot(grid[1, :]), importance)
+    return fig
+
+
+def plot_domain_classifier(run: ComparisonRun, baseline: BaselineRun | None) -> str:
+    """Domain-classifier score distributions, AUC vs baseline null, and separation drivers."""
+    fig = _domain_classifier_figure(run, baseline)
+    if fig is None:
+        return ""
     return figure_html(fig, "Classifier two-sample test", "AUC OOF")
 
 
@@ -2300,7 +2362,7 @@ def _domain_paragraph(run: ComparisonRun, baseline: BaselineRun | None, domain: 
         domain: Domain-classifier main table.
 
     Returns:
-        One paragraph of HTML.
+        HTML reading the score overlay, the AUC panel, and the drivers.
     """
     if domain.empty:
         return ""
@@ -2309,7 +2371,10 @@ def _domain_paragraph(run: ComparisonRun, baseline: BaselineRun | None, domain: 
     p95 = np.percentile(null, 95) if len(null) else np.nan
     perm_p = _scalar(domain, "permutation_p")
     drivers = run.table("domain_classifier", "importance").head(3)["feature"].tolist()
-    return (f"<p>A LightGBM classifier trained to tell the populations apart reaches an out-of-fold (OOF) area under the curve (AUC) of "
+    plots = ("<p>The score plot overlays out-of-fold P(new | x) for training (blue) and new (orange) rows. "
+             "Separated masses mean a function of the features can tell the populations apart; overlapping masses mean it cannot. "
+             "The AUC panel places the observed AUC (orange) on the grey baseline histogram; the dashed line is the 95th percentile of sampling noise.</p>")
+    return (plots + f"<p>A LightGBM classifier trained to tell the populations apart reaches an out-of-fold (OOF) area under the curve (AUC) of "
             f"<b>{auc:.3f}</b> [{_fmt(_scalar(domain, 'auc_ci_low'))}–{_fmt(_scalar(domain, 'auc_ci_high'))}]"
             + (f", permutation p = {perm_p:.3f}" if np.isfinite(perm_p) else "")
             + (f"; the baseline 95th percentile is {p95:.3f}" if np.isfinite(p95) else "")
@@ -2337,11 +2402,115 @@ def _kernel_results(run: ComparisonRun, baseline: BaselineRun | None) -> tuple[l
         if table.empty:
             continue
         entries.append({"title": plot_label, "null": baseline.null(task, metric) if baseline else np.array([]),
-                        "observed": _scalar(table, metric)})
+                        "observed": _scalar(table, metric), "permutation_p": _scalar(table, "permutation_p")})
         rows.append({"test": label, "statistic": _scalar(table, metric), "permutation p": _scalar(table, "permutation_p"),
                      "rows used (training/new)": f"{int(_scalar(table, 'n_source_rows')):,} / "
                                                  f"{int(_scalar(table, 'n_target_rows')):,}"})
     return entries, rows
+
+
+def _finite_float(value: Any) -> float:
+    """Coerce a scalar to a finite float, or NaN.
+
+    Args:
+        value: Stored statistic or p-value.
+
+    Returns:
+        ``float(value)`` when that is finite, otherwise ``nan``.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return number if np.isfinite(number) else float("nan")
+
+
+def _kernel_panel_reading(title: str) -> str:
+    """What one kernel-test panel measures.
+
+    Args:
+        title: Short plot title, for example ``MMD²`` or ``energy``.
+
+    Returns:
+        One sentence naming the distance.
+    """
+    lowered = title.lower()
+    if "mmd" in lowered:
+        return "MMD² (RBF kernel) measures whether the joint feature distributions differ."
+    if "energy" in lowered:
+        return ("Energy distance is a second two-sample distance on the same encoded features, "
+                "with the same visual encoding.")
+    return f"{html.escape(title)} is a two-sample distance on the joint feature distribution."
+
+
+def _kernel_panel_result(observed: float, threshold: float) -> str:
+    """Whether the observed kernel statistic sits beyond the baseline percentile.
+
+    Args:
+        observed: Statistic on the actual comparison.
+        threshold: Baseline 95th percentile, or NaN when no null was stored.
+
+    Returns:
+        One sentence without a trailing period.
+    """
+    if not np.isfinite(observed):
+        return "The observed value is not available"
+    if not np.isfinite(threshold):
+        return f"The observed value is {_fmt(observed)}; no baseline histogram was stored"
+    if observed > threshold:
+        return (f"The observed value {_fmt(observed)} sits to the right of the percentile {_fmt(threshold)}, "
+                "so this distance exceeds sampling noise")
+    return (f"The observed value {_fmt(observed)} is inside the baseline 95th percentile {_fmt(threshold)}, "
+            "so this distance is consistent with sampling noise")
+
+
+def _kernel_panel_paragraph(entry: dict[str, Any]) -> str:
+    """Read one kernel-test histogram: baseline, threshold, and observed line.
+
+    Args:
+        entry: Mapping with ``title``, ``null``, ``observed``, and optional ``permutation_p``.
+
+    Returns:
+        One HTML paragraph.
+
+    Raises:
+        ValueError: If a required key is missing.
+    """
+    missing = {"title", "null", "observed"} - set(entry)
+    if missing:
+        raise ValueError(f"kernel entry is missing keys: {sorted(missing)}.")
+    title = str(entry["title"])
+    null = np.asarray(entry["null"], dtype=float)
+    null = null[np.isfinite(null)]
+    observed = _finite_float(entry["observed"])
+    threshold = float(np.percentile(null, 95)) if len(null) else float("nan")
+    perm_p = _finite_float(entry.get("permutation_p", float("nan")))
+    p_text = f" (permutation p = {_fmt(perm_p)})" if np.isfinite(perm_p) else ""
+    return (f"<p>{_kernel_panel_reading(title)} Grey bars are the baseline (random training splits); "
+            f"the dashed line is that baseline's 95th percentile; the orange line is the observed value. "
+            f"{_kernel_panel_result(observed, threshold)}{p_text}.</p>")
+
+
+def _kernel_interpretation(entries: Sequence[dict[str, Any]]) -> str:
+    """One short paragraph per kernel-test plot.
+
+    Args:
+        entries: Plot entries from ``_kernel_results``.
+
+    Returns:
+        Concatenated HTML paragraphs, or an empty string when there are no entries.
+
+    Raises:
+        ValueError: If ``entries`` is not a sequence of mappings.
+    """
+    if not isinstance(entries, (list, tuple)):
+        raise ValueError(f"entries must be a sequence of mappings, got {type(entries).__name__}.")
+    paragraphs: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("entries must be a sequence of mappings.")
+        paragraphs.append(_kernel_panel_paragraph(entry))
+    return "".join(paragraphs)
 
 
 def section_joint(run: ComparisonRun, baseline: BaselineRun | None) -> Section | None:
@@ -2352,10 +2521,8 @@ def section_joint(run: ComparisonRun, baseline: BaselineRun | None) -> Section |
         return _section_with_errors(run, "joint", "Joint distribution", "", *tasks)
     entries, rows = _kernel_results(run, baseline)
     note = _section_baseline(run, "classifier two-sample", "kernel/energy")
-    kernel_text = ("<p>Kernel (MMD) and energy-distance permutation tests confirm the joint result with different "
-                   "sensitivity; p &lt; α together with a value beyond the baseline indicates a real joint shift.</p>")
     body = (plot_domain_classifier(run, baseline) + _domain_paragraph(run, baseline, domain) + note
-            + plot_null_grid(entries, "Kernel tests: observed vs baseline") + kernel_text
+            + plot_null_grid(entries, "Kernel tests: observed vs baseline") + _kernel_interpretation(entries)
             + table_html(pd.DataFrame(rows))
             + details("Classifier test details", table_html(domain))
             + details("All separation drivers", table_html(run.table("domain_classifier", "importance"))))
@@ -2866,6 +3033,7 @@ def section_short_model_evidence(run: ComparisonRun, baseline: BaselineRun | Non
         parts.append(_domain_paragraph(run, baseline, domain))
         entries, rows = _kernel_results(run, baseline)
         parts.append(plot_null_grid(entries, "Kernel tests: observed vs baseline"))
+        parts.append(_kernel_interpretation(entries))
         if rows:
             parts.append(table_html(pd.DataFrame(rows)))
     prediction = run.table("prediction_drift")
