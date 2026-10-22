@@ -60,7 +60,7 @@ def _run(tables: dict[str, pd.DataFrame] | None = None) -> ComparisonRun:
 
 
 def _metric_table(reference: float, estimate: float) -> pd.DataFrame:
-    """One AUC row in the shape ``plot_performance`` reads.
+    """One AUC row in the shape the performance tables store.
 
     Args:
         reference: Stored reference metric.
@@ -90,8 +90,24 @@ def _performance_run() -> ComparisonRun:
     })
 
 
+def test_detailed_performance_section_omits_the_degradation_plot() -> None:
+    """Tables and the callout already carry the numbers; the forest plot is not shown."""
+    body = section_performance(_performance_run()).body
+    _check('alt="Estimated performance"' in body, False, "no degradation figure")
+    _check("How reference and estimate are found" in body, True, "callout remains")
+    _check("Importance-weighted estimates" in body, True, "weighting table remains")
+
+
+def test_short_model_section_omits_the_degradation_plot() -> None:
+    """The brief keeps the numbers and callout, not the forest plot."""
+    body = section_short_model_evidence(_performance_run(), None).body
+    _check('alt="Estimated performance"' in body, False, "no degradation figure")
+    _check("How reference and estimate are found" in body, True, "callout remains")
+    _check("estimated area under the curve" in body, True, "numeric estimate remains")
+
+
 def test_detailed_performance_section_explains_how_points_are_found() -> None:
-    """The detailed report says how the diamond and circle are computed without new labels."""
+    """The detailed report says how reference and estimate are computed without new labels."""
     body = section_performance(_performance_run()).body
     _check("How reference and estimate are found" in body, True, "callout heading")
     _check("labels on the new population" in body, True, "no new labels")
@@ -103,12 +119,13 @@ def test_detailed_performance_section_explains_how_points_are_found() -> None:
 
 
 def test_short_model_section_explains_how_points_are_found() -> None:
-    """The data-scientist brief repeats the same construction, next to the plot."""
+    """The data-scientist brief repeats the same construction next to the tables."""
     body = section_short_model_evidence(_performance_run(), None).body
     _check("How reference and estimate are found" in body, True, "callout heading")
     _check("labels on the new population" in body, True, "no new labels")
     _check("unweighted metric on labelled" in body, True, "weighting reference")
     _check("new predicted probabilities" in body, True, "CBPE estimate uses new scores")
+
 
 
 def test_reference_estimate_copy_omits_methods_that_did_not_run() -> None:
