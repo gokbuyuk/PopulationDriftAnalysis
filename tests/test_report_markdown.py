@@ -6,7 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from population_drift.report import Section, html_fragment_to_markdown, write_report_files
+from population_drift.report import (
+    ACRONYMS,
+    Section,
+    apply_acronyms_markdown,
+    html_fragment_to_markdown,
+    write_report_files,
+    _markdown_two_column_table,
+    _two_column_table_html,
+)
 
 # 1x1 PNG. Source: W3C PNG test suite, 1x1 red pixel.
 _PNG = (
@@ -67,3 +75,20 @@ def test_write_report_files_rejects_an_empty_path() -> None:
     """A blank destination is invalid."""
     with pytest.raises(ValueError, match="output_path"):
         write_report_files("", "Title", "Subtitle", [])
+
+
+def test_markdown_glossary_includes_mmd_and_energy_readings() -> None:
+    """The appendix explains MMD² and energy distance when those magnitudes appear."""
+    text = apply_acronyms_markdown("The squared maximum mean discrepancy (MMD²) is 0.01.\n")
+    _check("Energy distance" in text, True, "named magnitude in appendix")
+    _check("Euclidean distance" in text, True, "energy reading")
+    _check("Local:" in ACRONYMS["MMD"].reading, True, "MMD neighborhood reading")
+    _check("Unbiased square" in ACRONYMS["MMD²"].reading, True, "MMD² stored number")
+
+
+def test_two_column_glossary_tables_reject_empty_input() -> None:
+    """Name/reading tables need two headings and at least one row."""
+    with pytest.raises(ValueError, match="rows"):
+        _two_column_table_html(("Statistic", "Reading"), ())
+    with pytest.raises(ValueError, match="headers"):
+        _markdown_two_column_table(("Statistic",), (("Energy distance", "reading"),))
