@@ -17,6 +17,7 @@ from population_drift.report import (
     _kernel_interpretation,
     _kernel_panel_reading,
     _kernel_results,
+    _UNIT_EDGE_PAD,
     _include_zero,
     _null_panel,
     _origin_span,
@@ -86,9 +87,33 @@ def _domain_run() -> tuple[ComparisonRun, BaselineRun]:
     return run, baseline
 
 
+def _tick_values(ax: plt.Axes, which: str) -> list[float]:
+    """Major tick locations on one axis.
+
+    Args:
+        ax: Axes to read.
+        which: ``x`` or ``y``.
+
+    Returns:
+        Tick positions as floats.
+    """
+    ticks = ax.get_xticks() if which == "x" else ax.get_yticks()
+    return [float(value) for value in ticks]
+
+
 def test_origin_span_caps_unit_positive_values_at_one() -> None:
     """AUC-like values use [0, 1], not a zoomed-in window around 0.9."""
     _check(_origin_span(0.72, 0.91), (0.0, 1.0), "unit positive cap")
+
+
+def test_origin_span_pads_when_data_reach_one() -> None:
+    """A value of 1 needs room past 1 so a marker on 1 is not clipped."""
+    _check(_origin_span(0.80, 1.0), (0.0, 1.0 + _UNIT_EDGE_PAD), "pad past 1")
+
+
+def test_origin_span_pads_when_data_reach_minus_one() -> None:
+    """A value of -1 needs room past -1 so a marker on -1 is not clipped."""
+    _check(_origin_span(-1.0, -0.30), (-1.0 - _UNIT_EDGE_PAD, 0.0), "pad past -1")
 
 
 def test_origin_span_uses_ten_times_a_small_positive_max() -> None:
@@ -120,6 +145,22 @@ def test_origin_span_rejects_non_finite_bounds() -> None:
     """Non-finite data cannot define an origin span."""
     with pytest.raises(ValueError, match="finite"):
         _origin_span(0.0, float("nan"))
+
+
+def test_style_axes_ticks_one_and_pads_when_data_sit_on_one() -> None:
+    """When data include 1, the x-axis ticks 1 and extends past it."""
+    fig, ax = plt.subplots()
+    try:
+        ax.plot([0.80, 1.0], [0, 1], marker="D")
+        ax.set_yticks([0, 1], ["weighting", "CBPE"])
+        ax.set_ylim(-0.6, 1.4)
+        _style_axes(ax)
+        x0, x1 = ax.get_xlim()
+        _check(round(x0, 6), 0.0, "starts at 0")
+        _check(round(x1, 6), round(1.0 + _UNIT_EDGE_PAD, 6), "buffer past 1")
+        _check(any(np.isclose(tick, 1.0) for tick in _tick_values(ax, "x")), True, "tick at 1")
+    finally:
+        plt.close(fig)
 
 
 def test_style_axes_sets_unit_x_limits_and_leaves_category_y() -> None:
@@ -156,6 +197,7 @@ def test_null_panel_x_axis_uses_zero_to_one_for_auc() -> None:
         x0, x1 = ax.get_xlim()
         _check(round(x0, 6), 0.0, "AUC null starts at 0")
         _check(round(x1, 6), 1.0, "AUC null ends at 1")
+        _check(any(np.isclose(tick, 1.0) for tick in _tick_values(ax, "x")), True, "tick at 1")
     finally:
         plt.close(fig)
 

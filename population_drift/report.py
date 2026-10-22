@@ -1040,6 +1040,25 @@ def figure_html(fig: plt.Figure, alt: str, terms: str = "") -> str:
     return f'<img class="plot" alt="{html.escape(alt)}"{listed} src="data:image/png;base64,{encoded}">'
 
 
+_UNIT_EDGE_PAD = 0.04
+
+
+def _pad_unit_edge(bound: float, data_extreme: float, edge: float) -> float:
+    """Extend past ±1 when a plotted value sits on that edge.
+
+    Args:
+        bound: Limit from ``_origin_span`` before padding.
+        data_extreme: Smallest or largest plotted value on this side.
+        edge: ``1.0`` or ``-1.0``.
+
+    Returns:
+        ``bound`` plus a buffer when data sit on ``edge``, otherwise ``bound``.
+    """
+    if np.isclose(bound, edge) and np.isclose(data_extreme, edge):
+        return edge + _UNIT_EDGE_PAD if edge > 0 else edge - _UNIT_EDGE_PAD
+    return bound
+
+
 def _origin_span(vmin: float, vmax: float) -> tuple[float, float]:
     """Limits from 0 (or -1) to ``min(10 * extreme, ±1)``, never clipping data.
 
@@ -1065,13 +1084,13 @@ def _origin_span(vmin: float, vmax: float) -> tuple[float, float]:
         low, high = high, low
     if low >= 0:
         upper = min(high * 10.0, 1.0) if high <= 1.0 else high
-        return 0.0, max(upper, high)
+        return 0.0, _pad_unit_edge(max(upper, high), high, 1.0)
     if high <= 0:
         lower = max(low * 10.0, -1.0) if low >= -1.0 else low
-        return min(lower, low), 0.0
+        return _pad_unit_edge(min(lower, low), low, -1.0), 0.0
     lower = -1.0 if low >= -1.0 else low
     upper = 1.0 if high <= 1.0 else high
-    return min(lower, low), max(upper, high)
+    return _pad_unit_edge(min(lower, low), low, -1.0), _pad_unit_edge(max(upper, high), high, 1.0)
 
 
 def _axis_is_categorical(ax: plt.Axes, which: str) -> bool:
@@ -1095,6 +1114,27 @@ def _axis_is_categorical(ax: plt.Axes, which: str) -> bool:
     return False
 
 
+def _add_unit_ticks(ax: plt.Axes, which: str) -> None:
+    """Keep 0 and ±1 on a unit-scale axis when they fall inside the limits.
+
+    Args:
+        ax: Axes whose limits are already set.
+        which: ``x`` or ``y``.
+    """
+    lim = ax.get_xlim() if which == "x" else ax.get_ylim()
+    low, high = (lim[0], lim[1]) if lim[0] <= lim[1] else (lim[1], lim[0])
+    ticks = [float(value) for value in matplotlib.ticker.MaxNLocator(nbins=4).tick_values(low, high)]
+    if low <= 0.0 <= high:
+        ticks.append(0.0)
+    unit_high = 1.0 + 2 * _UNIT_EDGE_PAD
+    if high <= unit_high and low <= 1.0 <= high:
+        ticks.append(1.0)
+    if low >= -unit_high and low <= -1.0 <= high:
+        ticks.append(-1.0)
+    ticks = sorted({round(value, 10) for value in ticks if low - 1e-12 <= value <= high + 1e-12})
+    (ax.set_xticks if which == "x" else ax.set_yticks)(ticks)
+
+
 def _include_zero(ax: plt.Axes, which: str) -> None:
     """Set one value axis to the origin span of the plotted data.
 
@@ -1112,7 +1152,8 @@ def _include_zero(ax: plt.Axes, which: str) -> None:
         raise TypeError(f"ax must be matplotlib Axes, got {type(ax).__name__}.")
     if which not in ("x", "y"):
         raise ValueError(f"which must be 'x' or 'y', got {which!r}.")
-    if _axis_is_categorical(ax, which):
+    ticks = ax.get_xticks() if which == "x" else ax.get_yticks()
+    if _axis_is_categorical(ax, which) or len(ticks) == 0:
         return
     interval = ax.dataLim.intervalx if which == "x" else ax.dataLim.intervaly
     vmin, vmax = float(interval[0]), float(interval[1])
@@ -1123,8 +1164,9 @@ def _include_zero(ax: plt.Axes, which: str) -> None:
     current = ax.get_xlim() if which == "x" else ax.get_ylim()
     if current[0] > current[1]:
         setter(high, low)
-        return
-    setter(low, high)
+    else:
+        setter(low, high)
+    _add_unit_ticks(ax, which)
 
 
 def _style_axes(ax: plt.Axes) -> None:
