@@ -1282,6 +1282,70 @@ def _attribution_share(values: pd.Series) -> pd.Series:
     return values / total
 
 
+_AXIS_PAD = 0.1
+
+
+def _axis_limits(values: Any, *, probability: bool = False) -> tuple[float, float]:
+    """Lower and upper bounds for a numeric plot axis.
+
+    Probability axes start at 0. Other axes use max + 0.1. Negative values extend
+    the axis to min - 0.1. A minimum of 0 keeps the origin at 0.
+
+    Args:
+        values: Numeric values drawn on the axis.
+        probability: If True, the lower bound is 0.
+
+    Returns:
+        ``(lower, upper)``.
+
+    Raises:
+        TypeError: If ``values`` is None or cannot be coerced to a numeric array.
+        ValueError: If there is no finite value.
+    """
+    if values is None:
+        raise TypeError("values must be numeric, got None.")
+    try:
+        array = np.asarray(values, dtype=float).ravel()
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"values must be numeric, got {type(values).__name__}.") from exc
+    finite = array[np.isfinite(array)]
+    if finite.size == 0:
+        raise ValueError("values must contain at least one finite number.")
+    low, high = float(finite.min()), float(finite.max())
+    upper = round(high + _AXIS_PAD, 10)
+    if probability:
+        return 0.0, upper
+    if np.any(finite < 0):
+        return round(low - _AXIS_PAD, 10), upper
+    if low == 0.0 or low - _AXIS_PAD < 0:
+        return 0.0, upper
+    return round(low - _AXIS_PAD, 10), upper
+
+
+def _half_or_unit_axis_limit(values: Any) -> float:
+    """Upper axis bound of 0.5, or 1 when any finite value exceeds 0.5.
+
+    Args:
+        values: Numeric values drawn on the axis.
+
+    Returns:
+        0.5 when every finite value is at most 0.5, else 1.0.
+
+    Raises:
+        TypeError: If ``values`` is None or cannot be coerced to a numeric array.
+    """
+    if values is None:
+        raise TypeError("values must be numeric, got None.")
+    try:
+        array = np.asarray(values, dtype=float).ravel()
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"values must be numeric, got {type(values).__name__}.") from exc
+    finite = array[np.isfinite(array)]
+    if finite.size and np.any(finite > 0.5):
+        return 1.0
+    return 0.5
+
+
 def _plot_shap_importance(ax: plt.Axes, shap: pd.DataFrame) -> None:
     """Compare training and new-population SHAP importance.
 
@@ -1300,11 +1364,61 @@ def _plot_shap_importance(ax: plt.Axes, shap: pd.DataFrame) -> None:
     ax.set_title("SHAP importance")
     ax.legend(frameon=False, fontsize=8)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(
+        np.concatenate([ranked["shap_importance_source"].to_numpy(),
+                        ranked["shap_importance_target"].to_numpy()]),
+        probability=True,
+    ))
 
 
 # --------------------------------------------------------------------------------------
 # Plots
 # --------------------------------------------------------------------------------------
+def _plot_psi_by_feature(ax: plt.Axes, features: pd.DataFrame, p95: dict[str, float]) -> None:
+    """Horizontal PSI bars with severity colours and baseline p95 ticks.
+
+    Args:
+        ax: Panel to draw on.
+        features: Feature assessment, sorted by PSI.
+        p95: Feature name to baseline PSI threshold.
+    """
+    colors = [LEVEL_COLORS.get(level, "#999") for level in features["severity"]]
+    ax.barh(features["feature"], features["psi"], color=colors)
+    for i, feature in enumerate(features["feature"]):
+        threshold = p95.get(feature)
+        if threshold is not None and np.isfinite(threshold):
+            ax.plot([threshold] * 2, [i - 0.4, i + 0.4], color="black", lw=2)
+    ax.axvline(0.10, ls="--", color="#999", lw=1)
+    ax.axvline(0.25, ls="--", color="#444", lw=1)
+    ax.set_xlabel("PSI  (dashed 0.10 / 0.25; tick = baseline p95)")
+    ax.set_title("PSI by feature")
+    ax.set_xlim(0, _half_or_unit_axis_limit(features["psi"]))
+    _style_axes(ax)
+
+
+def _plot_psi_vs_shap(ax: plt.Axes, features: pd.DataFrame) -> None:
+    """Scatter PSI against SHAP importance; label only above-baseline features.
+
+    Args:
+        ax: Panel to draw on.
+        features: Feature assessment with PSI, SHAP share, and ``beyond_baseline``.
+    """
+    colors = [LEVEL_COLORS.get(level, "#999") for level in features["severity"]]
+    ax.scatter(features["model_importance_share"], features["psi"], c=colors, s=60, edgecolor="white")
+    for row in features.itertuples():
+        if getattr(row, "beyond_baseline", False):
+            ax.annotate(str(row.feature), (row.model_importance_share, row.psi),
+                        xytext=(4, 3), textcoords="offset points", fontsize=8)
+    ax.axhline(0.10, ls="--", color="#999", lw=1)
+    ax.axhline(0.25, ls="--", color="#444", lw=1)
+    ax.set_xlabel("SHAP importance")
+    ax.set_ylabel("PSI")
+    ax.set_title("PSI vs SHAP importance")
+    ax.set_xlim(0, _half_or_unit_axis_limit(features["model_importance_share"]))
+    ax.set_ylim(0, _half_or_unit_axis_limit(features["psi"]))
+    _style_axes(ax)
+
+
 def plot_feature_overview(run: ComparisonRun) -> str:
     """Population Stability Index (PSI) per feature (coloured by severity, baseline p95 ticks) and drift vs model importance."""
     features = run.features.dropna(subset=["psi"]).sort_values("psi")
@@ -1315,30 +1429,9 @@ def plot_feature_overview(run: ComparisonRun) -> str:
     height = max(3.5, 0.3 * len(features) + 1.2)
     fig, axes = plt.subplots(1, 2 if has_importance else 1, figsize=(13 if has_importance else 7.5, height))
     axes = np.atleast_1d(axes)
-    ax = axes[0]
-    colors = [LEVEL_COLORS.get(level, "#999") for level in features["severity"]]
-    ax.barh(features["feature"], features["psi"], color=colors)
-    for i, feature in enumerate(features["feature"]):
-        if feature in p95 and np.isfinite(p95[feature]):
-            ax.plot([p95[feature]] * 2, [i - 0.4, i + 0.4], color="black", lw=2)
-    ax.axvline(0.10, ls="--", color="#999", lw=1)
-    ax.axvline(0.25, ls="--", color="#444", lw=1)
-    ax.set_xlabel("PSI  (dashed 0.10 / 0.25; tick = baseline p95)")
-    ax.set_title("PSI by feature")
-    _style_axes(ax)
+    _plot_psi_by_feature(axes[0], features, p95)
     if has_importance:
-        ax = axes[1]
-        ax.scatter(features["model_importance_share"], features["psi"], c=colors, s=60, edgecolor="white")
-        for row in features.itertuples():
-            if row.severity != "mild" or row.model_importance_share >= features["model_importance_share"].quantile(0.75):
-                ax.annotate(row.feature, (row.model_importance_share, row.psi), xytext=(4, 3),
-                            textcoords="offset points", fontsize=8)
-        ax.axhline(0.10, ls="--", color="#999", lw=1)
-        ax.axhline(0.25, ls="--", color="#444", lw=1)
-        ax.set_xlabel("SHAP importance")
-        ax.set_ylabel("PSI")
-        ax.set_title("PSI vs SHAP importance")
-        _style_axes(ax)
+        _plot_psi_vs_shap(axes[1], features)
     _collapse_shared_text(fig, axes)
     fig.tight_layout()
     return figure_html(fig, "Feature drift overview", "PSI SHAP" if has_importance else "PSI")
@@ -1362,6 +1455,8 @@ def plot_ecdfs(run: ComparisonRun, features: Sequence[str]) -> str:
         ax.set_title(f"{feature}: KS {row['ks_d']:.3f}, PSI {row['psi']:.3f}", fontsize=10)
         ax.set_ylabel("ECDF")
         _style_axes(ax)
+        ax.set_xlim(*_axis_limits(list(q["source"]) + list(q["target"])))
+        ax.set_ylim(*_axis_limits(q["probs"], probability=True))
     for ax in list(axes.flat)[len(features):]:
         ax.axis("off")
     axes.flat[0].legend(frameon=False, fontsize=8)
@@ -1389,6 +1484,7 @@ def plot_categories(run: ComparisonRun, features: Sequence[str]) -> str:
         ax.set_title(f"{feature}: Cramér's V {stats.loc[feature, 'cramers_v']:.3f}, PSI {stats.loc[feature, 'psi']:.3f}", fontsize=10)
         ax.set_ylabel("share")
         _style_axes(ax)
+        ax.set_ylim(*_axis_limits(list(data["source"]) + list(data["target"]), probability=True))
     for ax in list(axes.flat)[len(features):]:
         ax.axis("off")
     axes.flat[0].legend(frameon=False, fontsize=8)
@@ -1414,6 +1510,10 @@ def plot_missingness(run: ComparisonRun) -> str:
     ax.set_xlabel("missing rate")
     ax.legend(frameon=False)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(
+        np.concatenate([table["missing_rate_source"].to_numpy(), table["missing_rate_target"].to_numpy()]),
+        probability=True,
+    ))
     fig.tight_layout()
     return figure_html(fig, "Missing rates")
 
@@ -1443,18 +1543,26 @@ def null_histogram_bins(n_values: int) -> int:
 
 def _null_panel(ax: plt.Axes, null: np.ndarray, observed: float, title: str, percentile: float = 95) -> None:
     """Histogram of baseline values with the observed value and the baseline threshold."""
+    span = []
     if len(null):
         ax.hist(null, bins=null_histogram_bins(len(null)), color="#94a3b8", edgecolor="white")
         threshold = np.percentile(null, percentile)
         ax.axvline(threshold, color="black", ls="--", lw=1, label=f"baseline p{percentile:.0f}")
+        span.extend([null, [threshold]])
     if np.isfinite(observed):
         ax.axvline(observed, color=TARGET_COLOR, lw=2.2, label="observed")
+        span.append([observed])
     ax.set_title(title, fontsize=10)
     ax.set_yticks([])
     ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
     ax.ticklabel_format(axis="x", style="sci", scilimits=(-3, 4))
     ax.tick_params(axis="x", labelsize=8)
     _style_axes(ax)
+    if span:
+        ax.set_xlim(*_axis_limits(np.concatenate(span)))
+    heights = [patch.get_height() for patch in ax.patches]
+    if heights:
+        ax.set_ylim(*_axis_limits(heights))
 
 
 def plot_null_grid(entries: Sequence[dict[str, Any]], title: str) -> str:
@@ -1493,6 +1601,8 @@ def _draw_domain_scores(ax: plt.Axes, data: dict[str, Any]) -> None:
     ax.set_title("Scores by population", fontsize=10)
     ax.legend(frameon=False, fontsize=8)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(data["bins"], probability=True))
+    ax.set_ylim(*_axis_limits(list(data["source_hist"]) + list(data["target_hist"])))
 
 
 def _draw_domain_drivers(ax: plt.Axes, importance: pd.DataFrame) -> None:
@@ -1515,6 +1625,7 @@ def _draw_domain_drivers(ax: plt.Axes, importance: pd.DataFrame) -> None:
     ax.set_xlabel("SHAP importance")
     ax.set_title("Separation drivers", fontsize=10)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(importance["shap_share"], probability=True))
 
 
 def _domain_classifier_figure(run: ComparisonRun, baseline: BaselineRun | None) -> plt.Figure | None:
@@ -1617,6 +1728,8 @@ def plot_support(run: ComparisonRun) -> str:
         ax.set_title("Joint novelty", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
         _style_axes(ax)
+        ax.set_xlim(*_axis_limits(list(bins) + [outliers["threshold"]]))
+        ax.set_ylim(*_axis_limits(list(outliers["source_hist"]) + list(outliers["target_hist"])))
     if not coverage.empty:
         ax = axes.pop(0)
         cov = coverage.sort_values("outside_share")
@@ -1627,6 +1740,10 @@ def plot_support(run: ComparisonRun) -> str:
         ax.set_title("Outside training range", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
         _style_axes(ax)
+        ax.set_xlim(*_axis_limits(
+            list(cov["outside_share"]) + [cov["expected_share"].iloc[0]],
+            probability=True,
+        ))
     _collapse_shared_text(fig, grid)
     fig.tight_layout()
     return figure_html(fig, "Support checks", "OOD")
@@ -1653,6 +1770,11 @@ def plot_model_outputs(run: ComparisonRun) -> str:
         ax.set_title("Score distribution", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
         _style_axes(ax)
+        scores = list(bins)
+        if prediction.get("threshold") is not None:
+            scores.append(prediction["threshold"])
+        ax.set_xlim(*_axis_limits(scores))
+        ax.set_ylim(*_axis_limits(list(prediction["source_hist"]) + list(prediction["target_hist"])))
     if not shap.empty:
         _plot_shap_importance(axes.pop(0), shap)
     _collapse_shared_text(fig, grid)
@@ -1660,42 +1782,136 @@ def plot_model_outputs(run: ComparisonRun) -> str:
     return figure_html(fig, "Model outputs", "SHAP")
 
 
-def plot_performance(run: ComparisonRun) -> str:
-    """Reference vs estimated metric with 95% confidence interval (CI) for each estimation method."""
-    rows = []
-    for task, label in (("weighted_performance", "weighting"), ("cbpe", "CBPE")):
+def _degradation_interval(
+    reference: Any, low: Any, high: Any, higher_is_better: bool,
+) -> tuple[float, float]:
+    """Map an estimate CI onto the degradation scale.
+
+    Args:
+        reference: Metric on the training population.
+        low: Lower bound of the estimate CI.
+        high: Upper bound of the estimate CI.
+        higher_is_better: If True, degradation is reference minus the estimate.
+
+    Returns:
+        ``(ci_low, ci_high)`` on the degradation scale, or ``(nan, nan)`` when
+        either bound is non-finite.
+
+    Raises:
+        TypeError: If ``reference`` is not numeric or ``higher_is_better`` is not a bool.
+    """
+    if not isinstance(higher_is_better, (bool, np.bool_)):
+        raise TypeError(f"higher_is_better must be bool, got {type(higher_is_better).__name__}.")
+    try:
+        ref = float(reference)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"reference must be numeric, got {type(reference).__name__}.") from exc
+    lo_raw, hi_raw = float(low) if pd.notna(low) else np.nan, float(high) if pd.notna(high) else np.nan
+    if not np.isfinite(lo_raw) or not np.isfinite(hi_raw):
+        return np.nan, np.nan
+    if higher_is_better:
+        lo_raw, hi_raw = ref - hi_raw, ref - lo_raw
+    else:
+        lo_raw, hi_raw = lo_raw - ref, hi_raw - ref
+    if lo_raw > hi_raw:
+        lo_raw, hi_raw = hi_raw, lo_raw
+    return round(lo_raw, 10), round(hi_raw, 10)
+
+
+def _performance_degradation_frame(run: ComparisonRun) -> pd.DataFrame:
+    """One row per method and metric for the degradation forest.
+
+    Args:
+        run: Comparison with weighting and/or CBPE tables.
+
+    Returns:
+        Columns ``label``, ``degradation``, ``ci_low``, ``ci_high``, ``baseline_threshold``.
+    """
+    rows: list[dict[str, Any]] = []
+    for task, method in (("weighted_performance", "weighting"), ("cbpe", "CBPE")):
         table = run.table(task)
-        for row in table.itertuples():
-            rows.append((row.metric, label, row.reference_value, row.estimate, row.ci_low, row.ci_high))
-    if not rows:
+        if table.empty:
+            continue
+        thresholds = run.baseline_threshold(task, "degradation")
+        for rec in table.itertuples():
+            rows.append(_performance_degradation_row(rec, method, thresholds))
+    return pd.DataFrame(rows)
+
+
+def _performance_degradation_row(
+    rec: Any, method: str, thresholds: dict[str, float],
+) -> dict[str, Any]:
+    """Build one forest-plot row from a performance table record.
+
+    Args:
+        rec: Named tuple from the weighting or CBPE table.
+        method: Display name of the estimator.
+        thresholds: Metric name to baseline p95 of degradation.
+
+    Returns:
+        One row mapping for ``_performance_degradation_frame``.
+    """
+    metric = str(rec.metric)
+    ref, est = float(rec.reference_value), float(rec.estimate)
+    hib = bool(getattr(rec, "higher_is_better", True))
+    stored = getattr(rec, "degradation", np.nan)
+    deg = float(stored) if pd.notna(stored) else (ref - est if hib else est - ref)
+    ci_low, ci_high = _degradation_interval(ref, getattr(rec, "ci_low", np.nan),
+                                            getattr(rec, "ci_high", np.nan), hib)
+    tick = thresholds.get(metric, np.nan)
+    return {
+        "label": f"{PLOT_METRIC.get(metric, metric)} · {method}",
+        "degradation": deg, "ci_low": ci_low, "ci_high": ci_high,
+        "baseline_threshold": float(tick) if tick is not None and np.isfinite(tick) else np.nan,
+    }
+
+
+def _draw_performance_degradation(ax: plt.Axes, frame: pd.DataFrame) -> None:
+    """Forest plot of degradation with a short baseline tick per row that has one.
+
+    Args:
+        ax: Panel to draw on.
+        frame: Output of ``_performance_degradation_frame``, first row at the top.
+
+    Raises:
+        TypeError: If ``frame`` is not a DataFrame.
+        ValueError: If ``label`` or ``degradation`` is missing.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError(f"frame must be a pandas DataFrame, got {type(frame).__name__}.")
+    missing = {"label", "degradation"} - set(frame.columns)
+    if missing:
+        raise ValueError(f"Performance frame is missing columns: {sorted(missing)}.")
+    y = np.arange(len(frame))
+    ax.axvline(0.0, color="#334155", lw=1)
+    for i, row in enumerate(frame.itertuples()):
+        if np.isfinite(getattr(row, "ci_low", np.nan)) and np.isfinite(getattr(row, "ci_high", np.nan)):
+            ax.plot([row.ci_low, row.ci_high], [i, i], color=TARGET_COLOR, lw=2.2)
+        ax.plot(row.degradation, i, marker="o", color=TARGET_COLOR, ms=7)
+        tick = getattr(row, "baseline_threshold", np.nan)
+        if np.isfinite(tick):
+            ax.plot([tick, tick], [i - 0.35, i + 0.35], color="black", lw=2)
+    ax.set_yticks(y, frame["label"], fontsize=9)
+    ax.set_ylim(len(frame) - 0.4, -0.6)
+    ax.set_xlabel("degradation  (worse →; tick = baseline p95)")
+    ax.set_title("Performance degradation (95% CI)")
+    _style_axes(ax)
+    cols = [name for name in ("degradation", "ci_low", "ci_high", "baseline_threshold") if name in frame.columns]
+    span = np.append(frame[cols].to_numpy(dtype=float).ravel(), 0.0)
+    if np.isfinite(span).any():
+        ax.set_xlim(*_axis_limits(span))
+
+
+def plot_performance(run: ComparisonRun) -> str:
+    """Degradation of each estimated metric vs its training reference, with 95% CI."""
+    frame = _performance_degradation_frame(run)
+    if frame.empty:
         return ""
-    df = pd.DataFrame(rows, columns=["metric", "method", "reference", "estimate", "low", "high"])
-    metrics = list(dict.fromkeys(df["metric"]))
-    ncols = min(4, len(metrics))
-    nrows = math.ceil(len(metrics) / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 2.4 * nrows), squeeze=False)
-    for ax, metric in zip(axes.flat, metrics):
-        sub = df[df["metric"] == metric].reset_index(drop=True)
-        for i, row in sub.iterrows():
-            ax.plot(row["reference"], i, marker="D", color="#64748b", ms=7, label="reference" if i == 0 else None)
-            if np.isfinite(row["low"]):
-                ax.plot([row["low"], row["high"]], [i, i], color=TARGET_COLOR, lw=2)
-            ax.plot(row["estimate"], i, marker="o", color=TARGET_COLOR, ms=7, label="new (estimate)" if i == 0 else None)
-        ax.set_yticks(range(len(sub)), sub["method"], fontsize=8)
-        ax.set_ylim(-0.6, len(sub) - 0.4)
-        ax.set_title(PLOT_METRIC.get(str(metric), str(metric)), fontsize=10)
-        ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
-        ax.tick_params(axis="x", labelsize=8)
-        _style_axes(ax)
-    for ax in list(axes.flat)[len(metrics):]:
-        ax.axis("off")
-    handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper right", frameon=False, fontsize=8, ncol=2)
-    _collapse_shared_text(fig, axes)
-    fig.suptitle("Reference vs estimate (95% CI)", fontsize=11, x=0.02, ha="left")
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
-    labels = " ".join(PLOT_METRIC.get(str(metric), str(metric)) for metric in metrics)
-    return figure_html(fig, "Estimated performance", f"CI CBPE {labels}")
+    fig, ax = plt.subplots(figsize=(7.4, max(3.2, 0.42 * len(frame) + 1.4)))
+    _draw_performance_degradation(ax, frame)
+    fig.tight_layout()
+    names = " ".join(dict.fromkeys(frame["label"].str.split(" · ").str[0]))
+    return figure_html(fig, "Estimated performance", f"CI CBPE {names}")
 
 
 def plot_calibration(run: ComparisonRun) -> str:
@@ -1710,6 +1926,8 @@ def plot_calibration(run: ComparisonRun) -> str:
     ax.set_ylabel("positive rate")
     ax.set_title("Calibration", fontsize=10)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(list(reliability["mean_predicted"]) + [0.0, 1.0], probability=True))
+    ax.set_ylim(*_axis_limits(list(reliability["observed_rate"]) + [0.0, 1.0], probability=True))
     fig.tight_layout()
     return figure_html(fig, "Calibration")
 
@@ -1728,6 +1946,7 @@ def plot_baseline_feature_variability(baseline: BaselineRun) -> str:
     ax.set_xlabel("PSI on random training splits")
     ax.legend(frameon=False, fontsize=8)
     _style_axes(ax)
+    ax.set_xlim(*_axis_limits(list(psi["p95"]) + list(psi["p50"]) + [0.10]))
     fig.tight_layout()
     return figure_html(fig, "Baseline per-feature PSI", "PSI KS")
 
