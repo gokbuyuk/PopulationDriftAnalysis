@@ -1253,24 +1253,58 @@ def _attribution_share(values: pd.Series) -> pd.Series:
 
 
 _AXIS_PAD = 0.1
+_KERNEL_PAD_FRACTION = 0.05
 
 
-def _axis_limits(values: Any, *, probability: bool = False) -> tuple[float, float]:
+def _relative_axis_pad(values: Any, *, fraction: float = _KERNEL_PAD_FRACTION) -> float:
+    """Padding equal to a fraction of the farthest-from-zero value.
+
+    Args:
+        values: Numeric values drawn on the axis.
+        fraction: Share of the extreme absolute value. Default 5%.
+
+    Returns:
+        Non-negative pad. Zero when every finite value is 0.
+
+    Raises:
+        TypeError: If ``values`` is None or cannot be coerced to a numeric array.
+        ValueError: If there is no finite value, or ``fraction`` is negative.
+    """
+    if values is None:
+        raise TypeError("values must be numeric, got None.")
+    try:
+        array = np.asarray(values, dtype=float).ravel()
+        share = float(fraction)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("values and fraction must be numeric.") from exc
+    if share < 0 or not np.isfinite(share):
+        raise ValueError("fraction must be a non-negative finite number.")
+    finite = array[np.isfinite(array)]
+    if finite.size == 0:
+        raise ValueError("values must contain at least one finite number.")
+    extreme = max(abs(float(finite.min())), abs(float(finite.max())))
+    return round(share * extreme, 10)
+
+
+def _axis_limits(
+    values: Any, *, probability: bool = False, pad: float | None = None,
+) -> tuple[float, float]:
     """Lower and upper bounds for a numeric plot axis.
 
-    Axes use max + 0.1 and always include 0. Negative values extend to min - 0.1.
-    Probability axes never go below 0.
+    Axes use max + pad and always include 0. Negative values extend to min - pad.
+    Probability axes never go below 0. ``pad`` defaults to 0.1.
 
     Args:
         values: Numeric values drawn on the axis.
         probability: If True, the lower bound is 0 even if ``values`` are negative.
+        pad: Extra space beyond the data extreme. ``None`` uses ``_AXIS_PAD``.
 
     Returns:
         ``(lower, upper)``.
 
     Raises:
         TypeError: If ``values`` is None or cannot be coerced to a numeric array.
-        ValueError: If there is no finite value.
+        ValueError: If there is no finite value, or ``pad`` is negative.
     """
     if values is None:
         raise TypeError("values must be numeric, got None.")
@@ -1281,11 +1315,14 @@ def _axis_limits(values: Any, *, probability: bool = False) -> tuple[float, floa
     finite = array[np.isfinite(array)]
     if finite.size == 0:
         raise ValueError("values must contain at least one finite number.")
+    margin = _AXIS_PAD if pad is None else float(pad)
+    if not np.isfinite(margin) or margin < 0:
+        raise ValueError("pad must be a non-negative finite number.")
     low, high = float(finite.min()), float(finite.max())
-    upper = round(max(high + _AXIS_PAD, 0.0), 10)
+    upper = round(max(high + margin, 0.0), 10)
     if probability or not np.any(finite < 0):
         return 0.0, upper
-    return round(low - _AXIS_PAD, 10), upper
+    return round(low - margin, 10), upper
 
 
 def _half_or_unit_axis_limit(values: Any) -> float:
@@ -1525,7 +1562,9 @@ def _null_panel(ax: plt.Axes, null: np.ndarray, observed: float, title: str, per
     ax.tick_params(axis="x", labelsize=8)
     _style_axes(ax)
     if span:
-        ax.set_xlim(*_axis_limits(np.concatenate(span)))
+        stacked = np.concatenate(span)
+        ax.set_xlim(*_axis_limits(stacked, pad=_relative_axis_pad(stacked)))
+
     heights = [patch.get_height() for patch in ax.patches]
     if heights:
         ax.set_ylim(*_axis_limits(heights))

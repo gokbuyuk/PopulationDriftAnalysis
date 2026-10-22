@@ -13,6 +13,7 @@ from population_drift.report import (
     BaselineRun,
     ComparisonRun,
     _axis_limits,
+    _relative_axis_pad,
     _domain_classifier_figure,
     _draw_domain_drivers,
     _draw_domain_scores,
@@ -177,18 +178,18 @@ def test_include_zero_rejects_unknown_axis() -> None:
 
 
 def test_null_panel_x_axis_uses_data_range_with_zero_and_buffer() -> None:
-    """Kernel x-axes run from 0 through max + 0.1, not a tight window or a unit scale."""
+    """Kernel x-axes run from 0 through max plus 5%, not an extra 0.1."""
     fig, ax = plt.subplots()
     try:
         _null_panel(ax, np.linspace(0.48, 0.58, 30), 0.82, "AUC")
-        _check(ax.get_xlim(), (0.0, 0.92), "AUC includes 0 and pads the observed value")
+        _check(ax.get_xlim(), (0.0, 0.861), "AUC includes 0 and pads 5% of max")
         _check(any(np.isclose(tick, 0.0) for tick in _tick_values(ax, "x")), True, "tick at 0")
     finally:
         plt.close(fig)
     fig, ax = plt.subplots()
     try:
         _null_panel(ax, np.linspace(0.01, 0.04, 30), 0.05, "MMD²")
-        _check(ax.get_xlim(), (0.0, 0.15), "small MMD² pads max, still includes 0")
+        _check(ax.get_xlim(), (0.0, 0.0525), "small MMD² pads 5% of max")
     finally:
         plt.close(fig)
 
@@ -370,6 +371,23 @@ def test_half_or_unit_axis_limit_rejects_non_numeric_input() -> None:
         _half_or_unit_axis_limit("psi")
 
 
+def test_relative_axis_pad_is_five_percent_of_the_extreme() -> None:
+    """Kernel padding scales with the data instead of adding a flat 0.1."""
+    _check(_relative_axis_pad([0.0, 0.05]), 0.0025, "small positive")
+    _check(_relative_axis_pad([-0.3, 0.5]), 0.025, "signed")
+    _check(_relative_axis_pad([0.0, 0.0]), 0.0, "all zeros")
+
+
+def test_relative_axis_pad_rejects_invalid_input() -> None:
+    """Values must be finite numbers; the fraction cannot be negative."""
+    with pytest.raises(TypeError, match="numeric"):
+        _relative_axis_pad(None)
+    with pytest.raises(ValueError, match="finite"):
+        _relative_axis_pad([np.nan])
+    with pytest.raises(ValueError, match="fraction"):
+        _relative_axis_pad([0.1], fraction=-0.1)
+
+
 def test_axis_limits_start_at_zero_for_probabilities() -> None:
     """Probability axes start at 0 and pad the maximum by 0.1."""
     _check(_axis_limits([0.0, 1.0], probability=True), (0.0, 1.1), "full unit range")
@@ -428,17 +446,17 @@ def test_domain_drivers_x_axis_starts_at_zero() -> None:
 
 
 def test_null_panel_pads_positive_and_signed_ranges() -> None:
-    """Baseline histograms start at 0 when min is 0, and show min - 0.1 when signed."""
+    """Baseline histograms pad 5% of the farthest-from-zero value and keep 0."""
     fig, ax = plt.subplots()
     try:
         _null_panel(ax, np.linspace(0.0, 1.0, 30), 0.8, "MMD²")
-        _check(ax.get_xlim(), (0.0, 1.1), "non-negative statistic")
+        _check(ax.get_xlim(), (0.0, 1.05), "non-negative statistic")
     finally:
         plt.close(fig)
     fig, ax = plt.subplots()
     try:
         _null_panel(ax, np.linspace(-0.3, 0.5, 30), 0.4, "Δ")
-        _check(ax.get_xlim(), (-0.4, 0.6), "signed statistic")
+        _check(ax.get_xlim(), (-0.325, 0.525), "signed statistic")
     finally:
         plt.close(fig)
 
