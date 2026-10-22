@@ -19,6 +19,7 @@ from population_drift.report import (
     _kernel_results,
     _include_zero,
     _null_panel,
+    _origin_span,
     _style_axes,
     null_histogram_bins,
     section_joint,
@@ -85,39 +86,54 @@ def _domain_run() -> tuple[ComparisonRun, BaselineRun]:
     return run, baseline
 
 
-def _axis_includes_zero(limits: tuple[float, float]) -> bool:
-    """Whether a (low, high) axis interval contains 0, including inverted axes.
-
-    Args:
-        limits: ``(left, right)`` or ``(bottom, top)`` from Matplotlib.
-
-    Returns:
-        True when 0 lies on the closed interval.
-    """
-    low, high = limits
-    return min(low, high) <= 0 <= max(low, high)
+def test_origin_span_caps_unit_positive_values_at_one() -> None:
+    """AUC-like values use [0, 1], not a zoomed-in window around 0.9."""
+    _check(_origin_span(0.72, 0.91), (0.0, 1.0), "unit positive cap")
 
 
-def test_style_axes_includes_zero_when_all_values_are_positive() -> None:
-    """A series above 0 still shows the origin on both axes."""
+def test_origin_span_uses_ten_times_a_small_positive_max() -> None:
+    """Brier-like values get 10× headroom, still capped at 1."""
+    _check(_origin_span(0.003, 0.004), (0.0, 0.04), "10× small positive")
+
+
+def test_origin_span_caps_unit_negative_values_at_minus_one() -> None:
+    """Negative unit-scale values use [-1, 0]."""
+    _check(_origin_span(-0.8, -0.3), (-1.0, 0.0), "unit negative cap")
+
+
+def test_origin_span_uses_ten_times_a_small_negative_min() -> None:
+    """Small negative values get 10× headroom, still capped at -1."""
+    _check(_origin_span(-0.004, -0.003), (-0.04, 0.0), "10× small negative")
+
+
+def test_origin_span_does_not_clip_values_above_one() -> None:
+    """A statistic larger than 1 still fits on the axis."""
+    _check(_origin_span(0.5, 2.5), (0.0, 2.5), "above-one data visible")
+
+
+def test_origin_span_mixed_unit_values_use_plus_minus_one() -> None:
+    """When signs mix inside [-1, 1], the axis is [-1, 1]."""
+    _check(_origin_span(-0.2, 0.5), (-1.0, 1.0), "mixed unit")
+
+
+def test_origin_span_rejects_non_finite_bounds() -> None:
+    """Non-finite data cannot define an origin span."""
+    with pytest.raises(ValueError, match="finite"):
+        _origin_span(0.0, float("nan"))
+
+
+def test_style_axes_sets_unit_x_limits_and_leaves_category_y() -> None:
+    """Forest-plot x goes 0→1; labelled method rows keep their y window."""
     fig, ax = plt.subplots()
     try:
-        ax.plot([0.72, 0.80, 0.91], [0.20, 0.31, 0.44])
+        ax.plot([0.72, 0.91], [0, 1])
+        ax.set_yticks([0, 1], ["weighting", "CBPE"])
+        ax.set_ylim(-0.6, 1.4)
         _style_axes(ax)
-        _check(_axis_includes_zero(ax.get_xlim()), True, "x includes 0 when data are positive")
-        _check(_axis_includes_zero(ax.get_ylim()), True, "y includes 0 when data are positive")
-    finally:
-        plt.close(fig)
-
-
-def test_style_axes_includes_zero_when_all_values_are_negative() -> None:
-    """A series below 0 still shows the origin on both axes."""
-    fig, ax = plt.subplots()
-    try:
-        ax.plot([-0.91, -0.80, -0.72], [-0.44, -0.31, -0.20])
-        _style_axes(ax)
-        _check(_axis_includes_zero(ax.get_xlim()), True, "x includes 0 when data are negative")
-        _check(_axis_includes_zero(ax.get_ylim()), True, "y includes 0 when data are negative")
+        _check(ax.get_xlim(), (0.0, 1.0), "x is 0 to 1")
+        y0, y1 = ax.get_ylim()
+        _check(round(y0, 6), -0.6, "categorical y min")
+        _check(round(y1, 6), 1.4, "categorical y max")
     finally:
         plt.close(fig)
 
@@ -132,12 +148,14 @@ def test_include_zero_rejects_unknown_axis() -> None:
         plt.close(fig)
 
 
-def test_null_panel_x_axis_includes_zero_for_a_shifted_baseline() -> None:
-    """Baseline histograms of strictly positive statistics still start at 0."""
+def test_null_panel_x_axis_uses_zero_to_one_for_auc() -> None:
+    """An AUC baseline histogram is drawn on [0, 1], not [0.48, 0.82]."""
     fig, ax = plt.subplots()
     try:
         _null_panel(ax, np.linspace(0.48, 0.58, 30), 0.82, "AUC")
-        _check(_axis_includes_zero(ax.get_xlim()), True, "AUC null x-axis includes 0")
+        x0, x1 = ax.get_xlim()
+        _check(round(x0, 6), 0.0, "AUC null starts at 0")
+        _check(round(x1, 6), 1.0, "AUC null ends at 1")
     finally:
         plt.close(fig)
 

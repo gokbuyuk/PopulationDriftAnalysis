@@ -1040,11 +1040,68 @@ def figure_html(fig: plt.Figure, alt: str, terms: str = "") -> str:
     return f'<img class="plot" alt="{html.escape(alt)}"{listed} src="data:image/png;base64,{encoded}">'
 
 
-def _include_zero(ax: plt.Axes, which: str) -> None:
-    """Expand one axis so 0 is visible even when the data do not cross it.
+def _origin_span(vmin: float, vmax: float) -> tuple[float, float]:
+    """Limits from 0 (or -1) to ``min(10 * extreme, ±1)``, never clipping data.
 
     Args:
-        ax: Axes whose limits are already set from the plotted data.
+        vmin: Smallest plotted value.
+        vmax: Largest plotted value.
+
+    Returns:
+        ``(low, high)`` for ``set_xlim`` / ``set_ylim``.
+
+    Raises:
+        TypeError: If ``vmin`` or ``vmax`` is not numeric.
+        ValueError: If either bound is not finite.
+    """
+    try:
+        low = float(vmin)
+        high = float(vmax)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("vmin and vmax must be numeric.") from exc
+    if not np.isfinite([low, high]).all():
+        raise ValueError("vmin and vmax must be finite.")
+    if low > high:
+        low, high = high, low
+    if low >= 0:
+        upper = min(high * 10.0, 1.0) if high <= 1.0 else high
+        return 0.0, max(upper, high)
+    if high <= 0:
+        lower = max(low * 10.0, -1.0) if low >= -1.0 else low
+        return min(lower, low), 0.0
+    lower = -1.0 if low >= -1.0 else low
+    upper = 1.0 if high <= 1.0 else high
+    return min(lower, low), max(upper, high)
+
+
+def _axis_is_categorical(ax: plt.Axes, which: str) -> bool:
+    """Whether tick labels on one axis are category names rather than numbers.
+
+    Args:
+        ax: Axes to inspect.
+        which: ``x`` or ``y``.
+
+    Returns:
+        True when any non-empty tick label is not a number.
+    """
+    labels = ax.get_xticklabels() if which == "x" else ax.get_yticklabels()
+    for text in (label.get_text().strip() for label in labels):
+        if not text:
+            continue
+        try:
+            float(text.replace("−", "-"))
+        except ValueError:
+            return True
+    return False
+
+
+def _include_zero(ax: plt.Axes, which: str) -> None:
+    """Set one value axis to the origin span of the plotted data.
+
+    Category axes (named ticks) are left unchanged.
+
+    Args:
+        ax: Axes whose data limits are already set.
         which: ``x`` or ``y``.
 
     Raises:
@@ -1055,19 +1112,23 @@ def _include_zero(ax: plt.Axes, which: str) -> None:
         raise TypeError(f"ax must be matplotlib Axes, got {type(ax).__name__}.")
     if which not in ("x", "y"):
         raise ValueError(f"which must be 'x' or 'y', got {which!r}.")
-    getter = ax.get_xlim if which == "x" else ax.get_ylim
+    if _axis_is_categorical(ax, which):
+        return
+    interval = ax.dataLim.intervalx if which == "x" else ax.dataLim.intervaly
+    vmin, vmax = float(interval[0]), float(interval[1])
+    if not np.isfinite([vmin, vmax]).all():
+        return
     setter = ax.set_xlim if which == "x" else ax.set_ylim
-    low, high = getter()
-    if not np.isfinite([low, high]).all():
+    low, high = _origin_span(vmin, vmax)
+    current = ax.get_xlim() if which == "x" else ax.get_ylim()
+    if current[0] > current[1]:
+        setter(high, low)
         return
-    if low <= high:
-        setter(min(low, 0.0), max(high, 0.0))
-        return
-    setter(max(low, 0.0), min(high, 0.0))
+    setter(low, high)
 
 
 def _style_axes(ax: plt.Axes) -> None:
-    """Hide the top and right spines, add a light grid, and keep 0 on both axes.
+    """Hide the top and right spines, add a light grid, and set origin-based limits.
 
     Args:
         ax: Panel to style.
