@@ -1040,9 +1040,150 @@ def figure_html(fig: plt.Figure, alt: str, terms: str = "") -> str:
     return f'<img class="plot" alt="{html.escape(alt)}"{listed} src="data:image/png;base64,{encoded}">'
 
 
+_UNIT_EDGE_PAD = 0.04
+
+
+def _pad_unit_edge(bound: float, data_extreme: float, edge: float) -> float:
+    """Extend past ±1 when a plotted value sits on that edge.
+
+    Args:
+        bound: Limit from ``_origin_span`` before padding.
+        data_extreme: Smallest or largest plotted value on this side.
+        edge: ``1.0`` or ``-1.0``.
+
+    Returns:
+        ``bound`` plus a buffer when data sit on ``edge``, otherwise ``bound``.
+    """
+    if np.isclose(bound, edge) and np.isclose(data_extreme, edge):
+        return edge + _UNIT_EDGE_PAD if edge > 0 else edge - _UNIT_EDGE_PAD
+    return bound
+
+
+def _origin_span(vmin: float, vmax: float) -> tuple[float, float]:
+    """Limits from 0 (or -1) to ``min(10 * extreme, ±1)``, never clipping data.
+
+    Args:
+        vmin: Smallest plotted value.
+        vmax: Largest plotted value.
+
+    Returns:
+        ``(low, high)`` for ``set_xlim`` / ``set_ylim``.
+
+    Raises:
+        TypeError: If ``vmin`` or ``vmax`` is not numeric.
+        ValueError: If either bound is not finite.
+    """
+    try:
+        low = float(vmin)
+        high = float(vmax)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("vmin and vmax must be numeric.") from exc
+    if not np.isfinite([low, high]).all():
+        raise ValueError("vmin and vmax must be finite.")
+    if low > high:
+        low, high = high, low
+    if low >= 0:
+        upper = min(high * 10.0, 1.0) if high <= 1.0 else high
+        return 0.0, _pad_unit_edge(max(upper, high), high, 1.0)
+    if high <= 0:
+        lower = max(low * 10.0, -1.0) if low >= -1.0 else low
+        return _pad_unit_edge(min(lower, low), low, -1.0), 0.0
+    lower = -1.0 if low >= -1.0 else low
+    upper = 1.0 if high <= 1.0 else high
+    return _pad_unit_edge(min(lower, low), low, -1.0), _pad_unit_edge(max(upper, high), high, 1.0)
+
+
+def _axis_is_categorical(ax: plt.Axes, which: str) -> bool:
+    """Whether tick labels on one axis are category names rather than numbers.
+
+    Args:
+        ax: Axes to inspect.
+        which: ``x`` or ``y``.
+
+    Returns:
+        True when any non-empty tick label is not a number.
+    """
+    labels = ax.get_xticklabels() if which == "x" else ax.get_yticklabels()
+    for text in (label.get_text().strip() for label in labels):
+        if not text:
+            continue
+        try:
+            float(text.replace("−", "-"))
+        except ValueError:
+            return True
+    return False
+
+
+def _add_unit_ticks(ax: plt.Axes, which: str) -> None:
+    """Keep 0 and ±1 on a unit-scale axis when they fall inside the limits.
+
+    Args:
+        ax: Axes whose limits are already set.
+        which: ``x`` or ``y``.
+    """
+    lim = ax.get_xlim() if which == "x" else ax.get_ylim()
+    low, high = (lim[0], lim[1]) if lim[0] <= lim[1] else (lim[1], lim[0])
+    ticks = [float(value) for value in matplotlib.ticker.MaxNLocator(nbins=4).tick_values(low, high)]
+    if low <= 0.0 <= high:
+        ticks.append(0.0)
+    unit_high = 1.0 + 2 * _UNIT_EDGE_PAD
+    if high <= unit_high and low <= 1.0 <= high:
+        ticks.append(1.0)
+    if low >= -unit_high and low <= -1.0 <= high:
+        ticks.append(-1.0)
+    ticks = sorted({round(value, 10) for value in ticks if low - 1e-12 <= value <= high + 1e-12})
+    (ax.set_xticks if which == "x" else ax.set_yticks)(ticks)
+
+
+def _include_zero(ax: plt.Axes, which: str) -> None:
+    """Set one value axis to the origin span of the plotted data.
+
+    Category axes (named ticks) are left unchanged.
+
+    Args:
+        ax: Axes whose data limits are already set.
+        which: ``x`` or ``y``.
+
+    Raises:
+        TypeError: If ``ax`` is not a Matplotlib axes.
+        ValueError: If ``which`` is not ``x`` or ``y``.
+    """
+    if not isinstance(ax, plt.Axes):
+        raise TypeError(f"ax must be matplotlib Axes, got {type(ax).__name__}.")
+    if which not in ("x", "y"):
+        raise ValueError(f"which must be 'x' or 'y', got {which!r}.")
+    ticks = ax.get_xticks() if which == "x" else ax.get_yticks()
+    if _axis_is_categorical(ax, which) or len(ticks) == 0:
+        return
+    interval = ax.dataLim.intervalx if which == "x" else ax.dataLim.intervaly
+    vmin, vmax = float(interval[0]), float(interval[1])
+    if not np.isfinite([vmin, vmax]).all():
+        return
+    setter = ax.set_xlim if which == "x" else ax.set_ylim
+    low, high = _origin_span(vmin, vmax)
+    current = ax.get_xlim() if which == "x" else ax.get_ylim()
+    if current[0] > current[1]:
+        setter(high, low)
+    else:
+        setter(low, high)
+    _add_unit_ticks(ax, which)
+
+
 def _style_axes(ax: plt.Axes) -> None:
+    """Hide the top and right spines, add a light grid, and set origin-based limits.
+
+    Args:
+        ax: Panel to style.
+
+    Raises:
+        TypeError: If ``ax`` is not a Matplotlib axes.
+    """
+    if not isinstance(ax, plt.Axes):
+        raise TypeError(f"ax must be matplotlib Axes, got {type(ax).__name__}.")
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="both", alpha=0.25)
+    _include_zero(ax, "x")
+    _include_zero(ax, "y")
 
 
 def _as_grid(axes: Any) -> np.ndarray:
@@ -2727,6 +2868,62 @@ def section_model(run: ComparisonRun) -> Section | None:
                                 "model_prediction", "prediction_drift", "shap_drift")
 
 
+def _weighting_reference_estimate_item() -> str:
+    """How importance weighting builds the plot diamond and circle.
+
+    Returns:
+        One list item. The estimate is a reweighted labelled metric, not a new-row metric.
+    """
+    return (
+        "<b>Importance weighting.</b> The diamond is the unweighted metric on labelled "
+        "reference rows. The circle is the same metric after those rows are reweighted by a "
+        "domain-classifier density ratio so their feature mix matches the new population. "
+        "The bar bootstraps the labelled rows with those weights. New rows contribute "
+        "features only, not labels. Assumes covariate shift: P(y|x) unchanged."
+    )
+
+
+def _cbpe_reference_estimate_item() -> str:
+    """How confidence-based performance estimation builds the plot diamond and circle.
+
+    Returns:
+        One list item. Both points are expectations over predicted probabilities.
+    """
+    return (
+        "<b>Confidence-based performance estimation (CBPE).</b> Each score is treated as "
+        "P(y=1|x). The diamond is the expected metric if labels were drawn from the "
+        "reference predicted probabilities. The circle is the same functional on the "
+        "new predicted probabilities. The bar bootstraps the new scores. Assumes "
+        "calibrated probabilities and no concept shift. The diamond is not the labelled "
+        "(realized) metric."
+    )
+
+
+def _reference_estimate_callout(run: ComparisonRun) -> str:
+    """Explain how the Reference vs estimate plot is computed without new labels.
+
+    Args:
+        run: Comparison whose performance tables decide which methods to describe.
+
+    Returns:
+        A callout, or an empty string when neither estimator ran.
+    """
+    items: list[str] = []
+    if not run.table("weighted_performance").empty:
+        items.append(_weighting_reference_estimate_item())
+    if not run.table("cbpe").empty:
+        items.append(_cbpe_reference_estimate_item())
+    if not items:
+        return ""
+    disagree = (" If the methods disagree, treat the result as inconclusive."
+                if len(items) > 1 else "")
+    return (
+        '<div class="callout"><b>How reference and estimate are found.</b> '
+        "Neither value uses labels on the new population."
+        f"<ul>{''.join(f'<li>{item}</li>' for item in items)}</ul>{disagree}</div>"
+    )
+
+
 def section_performance(run: ComparisonRun) -> Section | None:
     """Label-free performance estimates, calibration and prior shift."""
     weighted, cbpe = run.table("weighted_performance"), run.table("cbpe")
@@ -2759,9 +2956,9 @@ def section_performance(run: ComparisonRun) -> Section | None:
     tolerance = run.metadata["config"]["performance_tolerance"]
     text = (f"<ul>{''.join(f'<li>{i}</li>' for i in items)}</ul><p>Tolerance for the primary metric: {tolerance:g} "
             f"({'relative' if run.metadata['problem_type'] == 'regression' else 'absolute area under the curve (AUC)'}). A signal is severe only "
-            "when the whole 95% confidence interval (CI) is beyond tolerance. If the methods disagree, treat the result as inconclusive.</p>")
+            "when the whole 95% confidence interval (CI) is beyond tolerance.</p>")
     note = _section_baseline(run, "effective sample size", "importance weighting", "CBPE", "BBSE", "calibration")
-    plots = plot_performance(run) + plot_calibration(run)
+    plots = plot_performance(run) + _reference_estimate_callout(run) + plot_calibration(run)
     tables = (details("Importance-weighted estimates", table_html(weighted) + table_html(summary))
               + details("Confidence-based performance estimation (CBPE) estimates", table_html(cbpe))
               + details("Calibration and prior shift", table_html(calibration) + table_html(label_shift)))
@@ -3166,7 +3363,7 @@ def section_short_model_evidence(run: ComparisonRun, baseline: BaselineRun | Non
                 "(below 0.80 means the ranking of reasons changed).</p>")
     weighted, cbpe = run.table("weighted_performance"), run.table("cbpe")
     if not weighted.empty or not cbpe.empty or not run.table("label_shift").empty:
-        parts.append(plot_performance(run) + plot_calibration(run))
+        parts.append(plot_performance(run) + _reference_estimate_callout(run) + plot_calibration(run))
         for task, label in (("weighted_performance", "importance weighting"),
                             ("cbpe", "confidence-based performance estimation (CBPE)")):
             table = run.table(task)

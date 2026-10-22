@@ -17,7 +17,11 @@ from population_drift.report import (
     _kernel_interpretation,
     _kernel_panel_reading,
     _kernel_results,
+    _UNIT_EDGE_PAD,
+    _include_zero,
     _null_panel,
+    _origin_span,
+    _style_axes,
     null_histogram_bins,
     section_joint,
     section_short_model_evidence,
@@ -81,6 +85,121 @@ def _domain_run() -> tuple[ComparisonRun, BaselineRun]:
         {},
     )
     return run, baseline
+
+
+def _tick_values(ax: plt.Axes, which: str) -> list[float]:
+    """Major tick locations on one axis.
+
+    Args:
+        ax: Axes to read.
+        which: ``x`` or ``y``.
+
+    Returns:
+        Tick positions as floats.
+    """
+    ticks = ax.get_xticks() if which == "x" else ax.get_yticks()
+    return [float(value) for value in ticks]
+
+
+def test_origin_span_caps_unit_positive_values_at_one() -> None:
+    """AUC-like values use [0, 1], not a zoomed-in window around 0.9."""
+    _check(_origin_span(0.72, 0.91), (0.0, 1.0), "unit positive cap")
+
+
+def test_origin_span_pads_when_data_reach_one() -> None:
+    """A value of 1 needs room past 1 so a marker on 1 is not clipped."""
+    _check(_origin_span(0.80, 1.0), (0.0, 1.0 + _UNIT_EDGE_PAD), "pad past 1")
+
+
+def test_origin_span_pads_when_data_reach_minus_one() -> None:
+    """A value of -1 needs room past -1 so a marker on -1 is not clipped."""
+    _check(_origin_span(-1.0, -0.30), (-1.0 - _UNIT_EDGE_PAD, 0.0), "pad past -1")
+
+
+def test_origin_span_uses_ten_times_a_small_positive_max() -> None:
+    """Brier-like values get 10× headroom, still capped at 1."""
+    _check(_origin_span(0.003, 0.004), (0.0, 0.04), "10× small positive")
+
+
+def test_origin_span_caps_unit_negative_values_at_minus_one() -> None:
+    """Negative unit-scale values use [-1, 0]."""
+    _check(_origin_span(-0.8, -0.3), (-1.0, 0.0), "unit negative cap")
+
+
+def test_origin_span_uses_ten_times_a_small_negative_min() -> None:
+    """Small negative values get 10× headroom, still capped at -1."""
+    _check(_origin_span(-0.004, -0.003), (-0.04, 0.0), "10× small negative")
+
+
+def test_origin_span_does_not_clip_values_above_one() -> None:
+    """A statistic larger than 1 still fits on the axis."""
+    _check(_origin_span(0.5, 2.5), (0.0, 2.5), "above-one data visible")
+
+
+def test_origin_span_mixed_unit_values_use_plus_minus_one() -> None:
+    """When signs mix inside [-1, 1], the axis is [-1, 1]."""
+    _check(_origin_span(-0.2, 0.5), (-1.0, 1.0), "mixed unit")
+
+
+def test_origin_span_rejects_non_finite_bounds() -> None:
+    """Non-finite data cannot define an origin span."""
+    with pytest.raises(ValueError, match="finite"):
+        _origin_span(0.0, float("nan"))
+
+
+def test_style_axes_ticks_one_and_pads_when_data_sit_on_one() -> None:
+    """When data include 1, the x-axis ticks 1 and extends past it."""
+    fig, ax = plt.subplots()
+    try:
+        ax.plot([0.80, 1.0], [0, 1], marker="D")
+        ax.set_yticks([0, 1], ["weighting", "CBPE"])
+        ax.set_ylim(-0.6, 1.4)
+        _style_axes(ax)
+        x0, x1 = ax.get_xlim()
+        _check(round(x0, 6), 0.0, "starts at 0")
+        _check(round(x1, 6), round(1.0 + _UNIT_EDGE_PAD, 6), "buffer past 1")
+        _check(any(np.isclose(tick, 1.0) for tick in _tick_values(ax, "x")), True, "tick at 1")
+    finally:
+        plt.close(fig)
+
+
+def test_style_axes_sets_unit_x_limits_and_leaves_category_y() -> None:
+    """Forest-plot x goes 0→1; labelled method rows keep their y window."""
+    fig, ax = plt.subplots()
+    try:
+        ax.plot([0.72, 0.91], [0, 1])
+        ax.set_yticks([0, 1], ["weighting", "CBPE"])
+        ax.set_ylim(-0.6, 1.4)
+        _style_axes(ax)
+        _check(ax.get_xlim(), (0.0, 1.0), "x is 0 to 1")
+        y0, y1 = ax.get_ylim()
+        _check(round(y0, 6), -0.6, "categorical y min")
+        _check(round(y1, 6), 1.4, "categorical y max")
+    finally:
+        plt.close(fig)
+
+
+def test_include_zero_rejects_unknown_axis() -> None:
+    """Only x and y can be expanded to the origin."""
+    fig, ax = plt.subplots()
+    try:
+        with pytest.raises(ValueError, match="which"):
+            _include_zero(ax, "z")
+    finally:
+        plt.close(fig)
+
+
+def test_null_panel_x_axis_uses_zero_to_one_for_auc() -> None:
+    """An AUC baseline histogram is drawn on [0, 1], not [0.48, 0.82]."""
+    fig, ax = plt.subplots()
+    try:
+        _null_panel(ax, np.linspace(0.48, 0.58, 30), 0.82, "AUC")
+        x0, x1 = ax.get_xlim()
+        _check(round(x0, 6), 0.0, "AUC null starts at 0")
+        _check(round(x1, 6), 1.0, "AUC null ends at 1")
+        _check(any(np.isclose(tick, 1.0) for tick in _tick_values(ax, "x")), True, "tick at 1")
+    finally:
+        plt.close(fig)
 
 
 def test_null_histogram_bins_is_at_least_40() -> None:
