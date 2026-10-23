@@ -1,10 +1,11 @@
 """Run a population comparison from editable path settings.
 
-The working directory is set to this file's directory before anything else runs,
-so relative paths stay valid when this toolkit is a subdirectory of a larger project.
+The working directory is set to the repository root (the parent of ``src``)
+before anything else runs, so relative paths stay valid when this toolkit is a
+subdirectory of a larger project.
 
-Edit the constants below and run ``python run_drift.py``, or edit the same
-fields in ``run_drift.ipynb`` and run all cells.
+Edit the constants below and run ``python src/run_drift.py``, or edit the same
+fields in ``src/run_drift.ipynb`` and run all cells.
 """
 
 from __future__ import annotations
@@ -20,11 +21,12 @@ from population_drift.analysis import main as run_compare
 
 logger = logging.getLogger("population_drift.run")
 
-ROOT = Path(__file__).resolve().parent
+SRC = Path(__file__).resolve().parent
+ROOT = SRC.parent
 if __name__ == "__main__":
     os.chdir(ROOT)
 
-# Edit these. A relative path is resolved from ROOT (the directory containing this file).
+# Edit these. A relative path is resolved from ROOT (the repository root).
 # Leave TEST_PATH empty to use the training table for every test.
 TRAIN_PATH = "demo_data/train.csv"
 TEST_PATH = "demo_data/evaluation.csv"
@@ -241,7 +243,7 @@ class DriftRun:
 
         Args:
             settings: Paths and comparison options.
-            root: Toolkit root. Defaults to the directory containing this file.
+            root: Repository root. Defaults to the parent of the directory containing this file.
 
         Raises:
             TypeError: If ``settings`` is not a ``DriftRunSettings`` instance.
@@ -411,10 +413,10 @@ class DriftRun:
 
 
 def set_working_directory(root: Path = ROOT) -> Path:
-    """Make the toolkit directory the process working directory.
+    """Make the repository root the process working directory.
 
     Args:
-        root: Directory that contains the ``population_drift`` package.
+        root: Repository root. The package is ``src/population_drift`` under it.
 
     Returns:
         The directory now in use.
@@ -425,8 +427,8 @@ def set_working_directory(root: Path = ROOT) -> Path:
     """
     if not isinstance(root, Path):
         raise TypeError("root must be a Path.")
-    if not (root / "population_drift").is_dir():
-        raise FileNotFoundError(f"population_drift package not found under {root}.")
+    if not (root / "src" / "population_drift").is_dir():
+        raise FileNotFoundError(f"population_drift package not found under {root / 'src'}.")
     os.chdir(root)
     return root.resolve()
 

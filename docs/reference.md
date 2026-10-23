@@ -1,6 +1,6 @@
 # Technical reference
 
-This document describes what the toolkit computes and how a verdict is reached. How to run it on your own files is in the [README](../README.md). Defaults live in `Thresholds` and `DriftConfig` in `population_drift/analysis.py` and are copied into each run’s metadata.
+This document describes what the toolkit computes and how a verdict is reached. How to run it on your own files is in the [README](../README.md). Defaults live in `Thresholds` and `DriftConfig` in `src/population_drift/analysis.py` and are copied into each run’s metadata.
 
 ## Question and what is not identified
 

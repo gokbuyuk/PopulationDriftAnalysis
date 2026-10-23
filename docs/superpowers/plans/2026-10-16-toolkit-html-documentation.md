@@ -14,7 +14,7 @@
 - Create only `docs/proposal_v2.html` and `reports/population_shift_assessment_v2.html`.
 - Keep both outputs self-contained; add no dependencies or external assets.
 - Use `severe`, `moderate`, and `mild` exactly as the toolkit does.
-- Treat `README.md`, `docs/reference.md`, `population_drift/`, and `tests/` as the sources of truth.
+- Treat `README.md`, `docs/reference.md`, `src/population_drift/`, and `tests/` as the sources of truth.
 - Run verification with the existing `.venv`.
 
 ## File Structure
@@ -31,7 +31,7 @@
 - Create: `docs/proposal_v2.html`
 - Read: `README.md`
 - Read: `docs/reference.md`
-- Read: `population_drift/analysis.py`
+- Read: `src/population_drift/analysis.py`
 - Read: `tests/test_comparison.py`
 
 **Interfaces:**
@@ -117,8 +117,8 @@ git commit -m "docs: add concise toolkit proposal"
 - Create: `reports/population_shift_assessment_v2.html`
 - Read: `README.md`
 - Read: `docs/reference.md`
-- Read: `population_drift/analysis.py`
-- Read: `population_drift/report.py`
+- Read: `src/population_drift/analysis.py`
+- Read: `src/population_drift/report.py`
 - Read: `tests/test_comparison.py`
 
 **Interfaces:**
@@ -237,8 +237,8 @@ git commit -m "docs: add detailed toolkit assessment"
 
 Compare every command, public API name, output path, reference pair,
 threshold, row cap, and verdict condition in the new HTML files against
-`README.md`, `docs/reference.md`, `population_drift/analysis.py`,
-`population_drift/report.py`, and `tests/test_comparison.py`. Correct any
+`README.md`, `docs/reference.md`, `src/population_drift/analysis.py`,
+`src/population_drift/report.py`, and `tests/test_comparison.py`. Correct any
 discrepancy in the new files only.
 
 - [ ] **Step 2: Run the test suite**

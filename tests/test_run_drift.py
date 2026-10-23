@@ -10,10 +10,10 @@ import pytest
 from population_drift.report import Section, write_report_files
 from run_drift import (
     MODEL_PATH,
+    SRC,
     DriftRun,
     DriftRunSettings,
     NotebookReport,
-    ROOT,
     set_working_directory,
 )
 
@@ -171,7 +171,7 @@ def test_set_working_directory_requires_the_package(tmp_path: Path) -> None:
 
 def test_notebook_settings_cell_builds_the_same_argv_shape() -> None:
     """The notebook is present, empty of outputs, and constructs DriftRunSettings."""
-    path = ROOT / "run_drift.ipynb"
+    path = SRC / "run_drift.ipynb"
     notebook = json.loads(path.read_text(encoding="utf-8"))
     sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
     joined = "\n".join(sources)
@@ -278,7 +278,7 @@ def test_notebook_report_rejects_an_empty_path() -> None:
 
 def test_notebook_displays_report_plots_tables_and_interpretations() -> None:
     """The notebook renders the markdown report instead of only printing paths."""
-    notebook = json.loads((ROOT / "run_drift.ipynb").read_text(encoding="utf-8"))
+    notebook = json.loads((SRC / "run_drift.ipynb").read_text(encoding="utf-8"))
     joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
     _check("from IPython.display import Image, Markdown, display" in joined, True, "IPython display")
     _check("NotebookReport(" in joined, True, "NotebookReport constructed")

@@ -11,7 +11,7 @@ Content must agree with:
 
 - `README.md` for supported workflows and commands.
 - `docs/reference.md` for methods, assumptions, thresholds, and outputs.
-- `population_drift/` for implemented behavior and defaults.
+- `src/population_drift/` for implemented behavior and defaults.
 - `tests/` for validated decision and input-handling behavior.
 
 If prose conflicts with code, the code and tests control. Unsupported methods
