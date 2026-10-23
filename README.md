@@ -4,7 +4,7 @@ Decide whether a LightGBM model fitted on one population can be applied to a new
 
 The comparison is scored against a baseline: the same statistics computed on random splits of the training population. A fixed cutoff such as Population Stability Index (PSI) ≥ 0.10 is not, by itself, the decision.
 
-Run the commands below from the repository root, with the virtual environment activated. Outputs under `data/`, `demo_data/`, `runs/`, and `reports/` are gitignored. Put your own files there, or anywhere else outside the paths you commit. A sample of each report type is committed under `examples/sample_reports/`.
+Run the commands below from the repository root, with the virtual environment activated. The whole toolkit is the `src/population_drift/` directory. `PYTHONPATH=src` makes `python -m population_drift` import that package. Outputs under `data/`, `demo_data/`, `runs/`, and `reports/` are gitignored. Put your own files there, or anywhere else outside the paths you commit. A sample of each report type is committed under `examples/sample_reports/`.
 
 Technical detail (tests, null, thresholds, output columns) is in [docs/reference.md](docs/reference.md).
 
@@ -16,11 +16,26 @@ Requires Python 3.10+.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+export PYTHONPATH=src
 ```
+
+## Inside a larger project
+
+Copy `src/population_drift/` into the other project's `src/`. Tests, docs, and example data stay in this repository. They are not part of the drop-in directory.
+
+```
+other_project/
+  src/
+    population_drift/     # this toolkit
+    other_package/
+  data/
+```
+
+From `other_project/`, with `PYTHONPATH=src`, `python -m population_drift` is the analysis command and `python -m population_drift.run_drift` is the path runner. Relative paths in `run_drift.py` and the notebook resolve from `other_project/` (the parent of `src/`). The package must be a direct child of `src/`.
 
 ## Compare your own populations
 
-Open `run_drift.ipynb`, edit the paths in the settings cell, and run all cells. The same fields can be edited at the top of `run_drift.py` and run with `python run_drift.py`.
+Open `src/population_drift/run_drift.ipynb`, edit the paths in the settings cell, and run all cells. The same fields can be edited at the top of `src/population_drift/run_drift.py` and run with `PYTHONPATH=src python -m population_drift.run_drift`.
 
 The new table has the same features and no labels. Levels are **severe**, **moderate**, and **mild**.
 
@@ -39,7 +54,7 @@ Each reference needs at least `n_new + 30` rows, and the new table needs at leas
 CSV, Parquet, and Feather are accepted. Pass the fitted LightGBM estimator as a pickle with `--model` (`.pkl`, `.pickle`, or `.joblib`). If that file cannot be loaded, feature-distribution tests still run and the load error is recorded on `decision.json` warnings; model-based tests are skipped. Pass missing codes with `--missing-sentinels` (for example `-999`). Name categorical columns with `--categorical`. A numeric column with at most 10 distinct training values is treated as categorical anyway, because the Kolmogorov–Smirnov (KS) statistic is not valid under heavy ties. Leave identifiers, the time column, and anything built from the label or the score out of the feature list.
 
 ```bash
-python -m population_drift compare \
+PYTHONPATH=src python -m population_drift compare \
   --train data/labeled.parquet \
   --new data/new.parquet \
   --features-file data/features.txt \
@@ -59,7 +74,7 @@ python -m population_drift compare \
 When the fit set and the evaluation set are separate files:
 
 ```bash
-python -m population_drift compare \
+PYTHONPATH=src python -m population_drift compare \
   --train data/fit.parquet \
   --test data/evaluation.parquet \
   --new data/new.parquet \
@@ -73,7 +88,7 @@ python -m population_drift compare \
 Regenerate the HTML and markdown reports from a finished directory:
 
 ```bash
-python -m population_drift.report --comparison runs/comparison --out runs/report.html
+PYTHONPATH=src python -m population_drift.report --comparison runs/comparison --out runs/report.html
 ```
 
 That writes the detailed report (`runs/report.html`, `runs/report.md`, plots under `runs/report_plots/`) and a short decision brief (`runs/report_short.html`, `runs/report_short.md`, plots under `runs/report_short_plots/`).
@@ -117,10 +132,10 @@ Reports from that generator at seed 7, using `--test` and 10 baseline rounds, ar
 | `examples/sample_reports/report_expectation.html` | Performance-expectation page. |
 | `examples/sample_reports/report_expectation.md` | Same page. PNGs are in `report_expectation_plots/`. |
 
-The notebook defaults already point at `demo_data/`. Open `run_drift.ipynb` and run all cells, or:
+The notebook defaults already point at `demo_data/`. Open `src/population_drift/run_drift.ipynb` and run all cells, or:
 
 ```bash
-python -m population_drift compare \
+PYTHONPATH=src python -m population_drift compare \
   --train demo_data/train.csv \
   --new demo_data/new.csv \
   --features-file demo_data/features.txt \
@@ -136,10 +151,11 @@ python -m population_drift compare \
 
 | Path | Role |
 |---|---|
-| `run_drift.ipynb` | Edit paths and run a comparison in Jupyter |
-| `run_drift.py` | Same runner as the notebook (`python run_drift.py`) |
-| `population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
-| `population_drift/report.py` | HTML report (`python -m population_drift.report`) |
+| `src/population_drift/` | Whole toolkit. Copy this directory into another project's `src/`. |
+| `src/population_drift/run_drift.ipynb` | Edit paths and run a comparison in Jupyter |
+| `src/population_drift/run_drift.py` | Same runner (`python -m population_drift.run_drift`) |
+| `src/population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
+| `src/population_drift/report.py` | HTML report (`python -m population_drift.report`) |
 | `examples/make_synthetic_data.py` | Example files only. Not imported by the toolkit. |
 | `examples/sample_reports/` | Committed sample of the detailed, short, and expectation reports. |
 | `docs/reference.md` | Methods, decision rule, configuration, output columns |
