@@ -4,7 +4,7 @@ Decide whether a LightGBM model fitted on one population can be applied to a new
 
 The comparison is scored against a baseline: the same statistics computed on random splits of the training population. A fixed cutoff such as Population Stability Index (PSI) ≥ 0.10 is not, by itself, the decision.
 
-Run the commands below from the repository root, with the virtual environment activated. The whole toolkit is the `src/population_drift/` directory. `PYTHONPATH=src` makes `python -m population_drift` import that package. Outputs under `data/`, `demo_data/`, `runs/`, and `reports/` are gitignored. Put your own files there, or anywhere else outside the paths you commit.
+Run the commands below from the repository root, with the virtual environment activated. The whole toolkit is the `src/population_drift/` directory. `PYTHONPATH=src` makes `python -m population_drift` import that package. Outputs under `data/`, `demo_data/`, `runs/`, and `reports/` are gitignored. Put your own files there, or anywhere else outside the paths you commit. A sample of each report type is committed under `examples/sample_reports/`.
 
 Technical detail (tests, null, thresholds, output columns) is in [docs/reference.md](docs/reference.md).
 
@@ -121,6 +121,17 @@ A mild label is not a measurement of accuracy on the new population. The run doe
 python examples/make_synthetic_data.py --out demo_data
 ```
 
+Reports from that generator at seed 7, using `--test` and 10 baseline rounds, are committed under `examples/sample_reports/`. Performance tolerance is 0.02. No operating-rate tolerance was set. The expectation page is within that band. The detailed report and the short drift screen are severe.
+
+| Path | Type |
+|---|---|
+| `examples/sample_reports/report.html` | Detailed report. Plots are embedded. |
+| `examples/sample_reports/report.md` | Same report. PNGs are in `report_plots/`. |
+| `examples/sample_reports/report_short.html` | Drift screen. |
+| `examples/sample_reports/report_short.md` | Same brief. PNGs are in `report_short_plots/`. |
+| `examples/sample_reports/report_expectation.html` | Performance-expectation page. |
+| `examples/sample_reports/report_expectation.md` | Same page. PNGs are in `report_expectation_plots/`. |
+
 The notebook defaults already point at `demo_data/`. Open `src/population_drift/run_drift.ipynb` and run all cells, or:
 
 ```bash
@@ -146,6 +157,7 @@ PYTHONPATH=src python -m population_drift compare \
 | `src/population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
 | `src/population_drift/report.py` | HTML report (`python -m population_drift.report`) |
 | `examples/make_synthetic_data.py` | Example files only. Not imported by the toolkit. |
+| `examples/sample_reports/` | Committed sample of the detailed, short, and expectation reports. |
 | `docs/reference.md` | Methods, decision rule, configuration, output columns |
 
 ## Python API

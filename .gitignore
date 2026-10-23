@@ -241,3 +241,6 @@ reports/
 *.xlsx
 *.xls
 *.html
+
+# Checked-in sample of the detailed, short, and expectation reports.
+!examples/sample_reports/**/*.html
