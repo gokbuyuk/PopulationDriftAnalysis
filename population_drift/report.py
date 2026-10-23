@@ -3752,4 +3752,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # ``python -m population_drift.report`` executes this file as ``__main__``.
+    # Importing it again under its package name keeps one ComparisonRun class.
+    from population_drift.report import main as report_main
+
+    raise SystemExit(report_main())
