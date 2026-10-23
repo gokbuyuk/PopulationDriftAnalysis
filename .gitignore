@@ -225,6 +225,9 @@ __marimo__/
 # Local agent specification. Not part of the toolkit users clone.
 docs/AGENT_INSTRUCTIONS.md
 
+# Agent conversation notes. Commit human-facing docs only.
+docs/superpowers/
+
 # Datasets, fitted artifacts, and generated analysis outputs.
 # Commit the toolkit only. Users run it on their own files locally.
 data/
