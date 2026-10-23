@@ -1,11 +1,12 @@
 """Run a population comparison from editable path settings.
 
-The working directory is set to the repository root (the parent of ``src``)
-before anything else runs, so relative paths stay valid when this toolkit is a
-subdirectory of a larger project.
+This module lives inside the ``population_drift`` package. Copy that package
+directory into another project's ``src/``. The working directory is the parent
+of that ``src`` directory, so relative paths such as ``data/`` stay at the
+project root.
 
-Edit the constants below and run ``python src/run_drift.py``, or edit the same
-fields in ``src/run_drift.ipynb`` and run all cells.
+Edit the constants below and run ``python -m population_drift.run_drift``, or
+edit the same fields in ``run_drift.ipynb`` and run all cells.
 """
 
 from __future__ import annotations
@@ -14,17 +15,21 @@ import json
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from population_drift.analysis import main as run_compare
-
-logger = logging.getLogger("population_drift.run")
-
-SRC = Path(__file__).resolve().parent
+PACKAGE_DIR = Path(__file__).resolve().parent
+SRC = PACKAGE_DIR.parent
 ROOT = SRC.parent
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 if __name__ == "__main__":
     os.chdir(ROOT)
+
+from population_drift.analysis import main as run_compare  # noqa: E402
+
+logger = logging.getLogger("population_drift.run")
 
 # Edit these. A relative path is resolved from ROOT (the repository root).
 # Leave TEST_PATH empty to use the training table for every test.
@@ -243,7 +248,7 @@ class DriftRun:
 
         Args:
             settings: Paths and comparison options.
-            root: Repository root. Defaults to the parent of the directory containing this file.
+            root: Project root, the parent of ``src``. Defaults to two levels above this file.
 
         Raises:
             TypeError: If ``settings`` is not a ``DriftRunSettings`` instance.

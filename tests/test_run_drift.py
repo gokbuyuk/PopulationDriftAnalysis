@@ -1,4 +1,4 @@
-"""Unit tests for the path runner used by ``run_drift.py`` and ``run_drift.ipynb``."""
+"""Unit tests for the path runner used by ``population_drift.run_drift``."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from population_drift.report import Section, write_report_files
-from run_drift import (
+from population_drift.run_drift import (
     MODEL_PATH,
     SRC,
     DriftRun,
@@ -140,7 +140,7 @@ def test_run_still_invokes_compare_when_the_model_file_is_unreadable(
         seen.append(argv)
         return 0
 
-    monkeypatch.setattr("run_drift.run_compare", fake_main)
+    monkeypatch.setattr("population_drift.run_drift.run_compare", fake_main)
     code = DriftRun(_settings(tmp_path, model_path=str(model), output_dir=str(out)), root=tmp_path).run()
     _check(code, 0, "exit code when the model file exists but is unreadable")
     _check("--model" in seen[0], True, "unreadable model is still passed to compare")
@@ -157,7 +157,7 @@ def test_run_logs_the_verdict_when_the_comparison_succeeds(
         _check(argv[0], "compare", "subcommand passed to analysis.main")
         return 0
 
-    monkeypatch.setattr("run_drift.run_compare", fake_main)
+    monkeypatch.setattr("population_drift.run_drift.run_compare", fake_main)
     settings = _settings(tmp_path, output_dir=str(out))
     code = DriftRun(settings, root=tmp_path).run()
     _check(code, 0, "exit code when compare succeeds")
@@ -171,7 +171,7 @@ def test_set_working_directory_requires_the_package(tmp_path: Path) -> None:
 
 def test_notebook_settings_cell_builds_the_same_argv_shape() -> None:
     """The notebook is present, empty of outputs, and constructs DriftRunSettings."""
-    path = SRC / "run_drift.ipynb"
+    path = SRC / "population_drift" / "run_drift.ipynb"
     notebook = json.loads(path.read_text(encoding="utf-8"))
     sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
     joined = "\n".join(sources)
@@ -278,7 +278,7 @@ def test_notebook_report_rejects_an_empty_path() -> None:
 
 def test_notebook_displays_report_plots_tables_and_interpretations() -> None:
     """The notebook renders the markdown report instead of only printing paths."""
-    notebook = json.loads((SRC / "run_drift.ipynb").read_text(encoding="utf-8"))
+    notebook = json.loads((SRC / "population_drift" / "run_drift.ipynb").read_text(encoding="utf-8"))
     joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
     _check("from IPython.display import Image, Markdown, display" in joined, True, "IPython display")
     _check("NotebookReport(" in joined, True, "NotebookReport constructed")

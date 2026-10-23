@@ -4,7 +4,7 @@ Decide whether a LightGBM model fitted on one population can be applied to a new
 
 The comparison is scored against a baseline: the same statistics computed on random splits of the training population. A fixed cutoff such as Population Stability Index (PSI) ≥ 0.10 is not, by itself, the decision.
 
-Run the commands below from the repository root, with the virtual environment activated. The package and the runners live in `src/`. `PYTHONPATH=src` makes `python -m population_drift` import that package. Outputs under `data/`, `demo_data/`, `runs/`, and `reports/` are gitignored. Put your own files there, or anywhere else outside the paths you commit.
+Run the commands below from the repository root, with the virtual environment activated. The whole toolkit is the `src/population_drift/` directory. `PYTHONPATH=src` makes `python -m population_drift` import that package. Outputs under `data/`, `demo_data/`, `runs/`, and `reports/` are gitignored. Put your own files there, or anywhere else outside the paths you commit.
 
 Technical detail (tests, null, thresholds, output columns) is in [docs/reference.md](docs/reference.md).
 
@@ -19,9 +19,23 @@ pip install -r requirements.txt
 export PYTHONPATH=src
 ```
 
+## Inside a larger project
+
+Copy `src/population_drift/` into the other project's `src/`. Tests, docs, and example data stay in this repository. They are not part of the drop-in directory.
+
+```
+other_project/
+  src/
+    population_drift/     # this toolkit
+    other_package/
+  data/
+```
+
+From `other_project/`, with `PYTHONPATH=src`, `python -m population_drift` is the analysis command and `python -m population_drift.run_drift` is the path runner. Relative paths in `run_drift.py` and the notebook resolve from `other_project/` (the parent of `src/`). The package must be a direct child of `src/`.
+
 ## Compare your own populations
 
-Open `src/run_drift.ipynb`, edit the paths in the settings cell, and run all cells. The same fields can be edited at the top of `src/run_drift.py` and run with `python src/run_drift.py`.
+Open `src/population_drift/run_drift.ipynb`, edit the paths in the settings cell, and run all cells. The same fields can be edited at the top of `src/population_drift/run_drift.py` and run with `PYTHONPATH=src python -m population_drift.run_drift`.
 
 The new table has the same features and no labels. Levels are **severe**, **moderate**, and **mild**.
 
@@ -107,7 +121,7 @@ A mild label is not a measurement of accuracy on the new population. The run doe
 python examples/make_synthetic_data.py --out demo_data
 ```
 
-The notebook defaults already point at `demo_data/`. Open `src/run_drift.ipynb` and run all cells, or:
+The notebook defaults already point at `demo_data/`. Open `src/population_drift/run_drift.ipynb` and run all cells, or:
 
 ```bash
 PYTHONPATH=src python -m population_drift compare \
@@ -126,8 +140,9 @@ PYTHONPATH=src python -m population_drift compare \
 
 | Path | Role |
 |---|---|
-| `src/run_drift.ipynb` | Edit paths and run a comparison in Jupyter |
-| `src/run_drift.py` | Same runner as the notebook (`python src/run_drift.py`) |
+| `src/population_drift/` | Whole toolkit. Copy this directory into another project's `src/`. |
+| `src/population_drift/run_drift.ipynb` | Edit paths and run a comparison in Jupyter |
+| `src/population_drift/run_drift.py` | Same runner (`python -m population_drift.run_drift`) |
 | `src/population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
 | `src/population_drift/report.py` | HTML report (`python -m population_drift.report`) |
 | `examples/make_synthetic_data.py` | Example files only. Not imported by the toolkit. |
