@@ -285,3 +285,20 @@ def test_notebook_displays_report_plots_tables_and_interpretations() -> None:
     _check("display(Markdown(part.payload))" in joined, True, "markdown tables and interpretations")
     _check("display(Image(filename=part.payload))" in joined, True, "plots displayed")
     _check("for part in report.parts()" in joined, True, "each report part is shown")
+
+
+def test_notebook_prints_each_html_report_in_its_own_cell() -> None:
+    """The notebook prints the full HTML source instead of requiring a browser."""
+    notebook = json.loads((SRC / "population_drift" / "run_drift.ipynb").read_text(encoding="utf-8"))
+    sources = [
+        "".join(cell.get("source", []))
+        for cell in notebook["cells"]
+        if cell.get("cell_type") == "code"
+    ]
+    printers = [source for source in sources if "print(path.read_text(encoding=\"utf-8\"))" in source]
+    _check(len(printers), 1, "one html print cell")
+    source = printers[0]
+    _check("NotebookReport(" in source, False, "print cell is separate from the brief")
+    _check("short_report_path(html_report)" in source, True, "decision brief html")
+    _check("expectation_report_path(html_report)" in source, True, "expectation html")
+    _check("html_report" in source, True, "detailed html")
