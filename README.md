@@ -54,7 +54,7 @@ python -m population_drift compare \
   --report runs/report.html
 ```
 
-`--threshold` is the operating cutoff for the predicted-positive rate. Set it to the cutoff you deploy. `--performance-tolerance` is the absolute area under the curve (AUC) drop (binary) or relative error increase (regression) that counts as material. `--problem-type regression` switches those metrics.
+`--threshold` is the operating cutoff for the predicted-positive rate. Set it to the cutoff you deploy. `--performance-tolerance` is the absolute area under the curve (AUC) drop (binary) or relative error increase (regression) that counts as material. `--rate-tolerance` is the absolute band around the reference operating rate; omit it to show the rate without letting it set the expectation headline. `--problem-type regression` switches those metrics.
 
 When the fit set and the evaluation set are separate files:
 
@@ -84,13 +84,15 @@ That writes the detailed report (`runs/report.html`, `runs/report.md`, plots und
 
 | Path | Contents |
 |---|---|
-| `runs/report_short.html` | Decision brief for data scientists: verdict, action, counted signals, flagged features, and the essential plots. |
+| `runs/report_expectation.html` | Page to show stakeholders and other data scientists: whether estimated performance on the new data stays inside the pre-set tolerance, the operating rate, and the model-important features that moved. |
+| `runs/report_expectation.md` | Same page as markdown. Plots are PNG files under `runs/report_expectation_plots/`. |
+| `runs/report_short.html` | Drift screen: verdict, counted signals, flagged features, and the essential plots. |
 | `runs/report_short.md` | Same brief as markdown. Plots are PNG files under `runs/report_short_plots/`. |
 | `runs/report.html` | Full report. Each section names the pair that test used. Plots are embedded. |
 | `runs/report.md` | Same full report as markdown. Plots are PNG files under `runs/report_plots/`. |
 | `runs/comparison/decision.json` | `verdict_level` (`severe`, `moderate`, `mild`), signals, and `task_pairs`. |
 
-`severe` means do not use the model as is. `moderate` means use only with review. `mild` means no severe signal, at most two moderate signals, and no moderate signal on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP on the population used for that comparison.
+`report_expectation.html` is the page to circulate. Its headline is whether estimated performance stays inside the tolerance. `severe` means do not use the model as is. `moderate` means use only with review. `mild` means no severe signal, at most two moderate signals, and no moderate signal on a model-important feature. Model-important features are the smallest set reaching 80% of mean absolute TreeSHAP on the population used for that comparison.
 
 A mild label is not a measurement of accuracy on the new population. The run does not test whether a given feature vector still maps to the same label. The performance numbers are estimates under the assumptions in [docs/reference.md](docs/reference.md).
 
