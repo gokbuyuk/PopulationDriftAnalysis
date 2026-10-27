@@ -3,9 +3,9 @@
 This script is separate from the drift comparison. It writes one score per input
 row, plus the score distribution and TreeSHAP feature importance.
 
-Edit ``examples/batch_score.json`` and run:
+Edit ``examples/batch_score_config.sh`` and run:
 
-    python -m population_drift.batch_score --config examples/batch_score.json
+    python -m population_drift.batch_score --config examples/batch_score_config.sh
 
 Flags on the command line replace the same field from the config file.
 """
@@ -13,8 +13,8 @@ Flags on the command line replace the same field from the config file.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +47,7 @@ _RESERVED_COLUMNS = frozenset({"row_index", "score"})
 _TABLE_SUFFIXES = frozenset({".csv", ".parquet", ".pq", ".feather"})
 _PROBLEM_TYPES = frozenset({"binary", "regression"})
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
+_ASSIGNMENT = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 _CONFIG_FIELDS = frozenset({
     "model_path", "data_path", "scores_path", "output_dir", "problem_type", "threshold",
     "missing_sentinels", "id_columns", "feature_columns", "features_file",
@@ -830,34 +831,34 @@ def run_batch_score(request: BatchScoreRequest) -> BatchScoreResult:
     return result
 
 
-def load_score_config(path: str | Path) -> dict[str, Any]:
-    """Read a JSON file of scoring paths and settings.
+def load_score_config(path: str | Path) -> dict[str, str]:
+    """Read a shell config of scoring paths and settings.
+
+    The file is assignment syntax (``name=value`` or ``name="value"``), not a
+    script that is executed. Blank lines and ``#`` comments are ignored. Paths
+    are used as written, relative to the working directory.
 
     Args:
-        path: Config file. Paths inside it are used as written, relative to the
-            working directory, the same way as the command-line flags.
+        path: Config file, normally ``batch_score_config.sh``.
 
     Returns:
-        The JSON object. Unknown fields are rejected.
+        Assignment names and unquoted values. Unknown names are rejected.
 
     Raises:
         TypeError: If ``path`` is empty.
         FileNotFoundError: If the file does not exist.
-        ValueError: If the file is not a JSON object or contains an unknown field.
-        json.JSONDecodeError: If the file is not valid JSON.
+        ValueError: If a line is not an assignment, a name is repeated, or a name is unknown.
     """
     config_path = Path(_require_path(path, "config"))
     if not config_path.is_file():
         raise FileNotFoundError(f"Score config not found: {config_path}")
-    loaded = json.loads(config_path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise ValueError("Score config must be a JSON object.")
+    loaded = _parse_shell_assignments(config_path.read_text(encoding="utf-8"))
     _reject_unknown_config_fields(loaded)
     return loaded
 
 
 def request_from_config(path: str | Path) -> BatchScoreRequest:
-    """Build a scoring request from a JSON config file.
+    """Build a scoring request from a shell config file.
 
     Args:
         path: Config file. See :func:`load_score_config`.
@@ -868,11 +869,121 @@ def request_from_config(path: str | Path) -> BatchScoreRequest:
     Raises:
         FileNotFoundError: If ``path`` does not exist.
         ValueError: If a field is unknown or a value is invalid.
-        json.JSONDecodeError: If the file is not valid JSON.
     """
     values = _values_from_config(load_score_config(path))
     _require_log_level(values.pop("log_level"))
     return BatchScoreRequest(**values)
+
+
+def _parse_shell_assignments(text: str) -> dict[str, str]:
+    """Parse ``name=value`` lines from a shell config.
+
+    Args:
+        text: File contents.
+
+    Returns:
+        Names and unquoted values.
+
+    Raises:
+        ValueError: If a line is not an assignment or a name is repeated.
+    """
+    loaded: dict[str, str] = {}
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _ASSIGNMENT.match(line)
+        if match is None:
+            raise ValueError(f"Score config line {line_number} is not a name=value assignment.")
+        name = match.group(1)
+        if name in loaded:
+            raise ValueError(f"Score config repeats {name}.")
+        loaded[name] = _unquote_shell(match.group(2).strip())
+    return loaded
+
+
+def _unquote_shell(value: str) -> str:
+    """Remove one matching pair of single or double quotes.
+
+    Args:
+        value: Text after ``=``.
+
+    Returns:
+        The value with surrounding quotes removed. Other text is unchanged.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def _is_blank(value: object) -> bool:
+    """Return whether a config value was left empty.
+
+    Args:
+        value: Parsed config value.
+
+    Returns:
+        True for None or a blank string.
+    """
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _config_int(value: object, name: str, default: int) -> int:
+    """Return an integer config value, or ``default`` when it is blank.
+
+    Args:
+        value: Parsed value.
+        name: Field name used in the error.
+        default: Value used when ``value`` is blank.
+
+    Returns:
+        The integer.
+
+    Raises:
+        ValueError: If ``value`` is not an integer.
+        TypeError: If ``value`` is not a string or integer.
+    """
+    if _is_blank(value):
+        return default
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer.")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an integer.") from exc
+    raise TypeError(f"{name} must be an integer.")
+
+
+def _config_float(value: object, name: str, default: float) -> float:
+    """Return a float config value, or ``default`` when it is blank.
+
+    Args:
+        value: Parsed value.
+        name: Field name used in the error.
+        default: Value used when ``value`` is blank.
+
+    Returns:
+        The float.
+
+    Raises:
+        ValueError: If ``value`` is not a finite number.
+        TypeError: If ``value`` is not a string or number.
+    """
+    if _is_blank(value):
+        return default
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite number.")
+    if isinstance(value, (int, float)):
+        return _require_finite_number(value, name)
+    if isinstance(value, str):
+        try:
+            return _require_finite_number(float(value), name)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a finite number.") from exc
+    raise TypeError(f"{name} must be a finite number.")
 
 
 def _reject_unknown_config_fields(config: Mapping[str, Any]) -> None:
@@ -886,7 +997,7 @@ def _reject_unknown_config_fields(config: Mapping[str, Any]) -> None:
         ValueError: If a key is not a scoring setting.
     """
     if not isinstance(config, Mapping):
-        raise TypeError("Score config must be a JSON object.")
+        raise TypeError("Score config must be a mapping of name=value assignments.")
     unknown = sorted(set(config) - _CONFIG_FIELDS)
     if unknown:
         raise ValueError(f"Unknown score config fields: {unknown}.")
@@ -949,7 +1060,7 @@ def _sentinels_from_config(value: object) -> tuple[Any, ...]:
         TypeError: If ``value`` is not a list or string.
         ValueError: If a code is null or non-finite.
     """
-    if value is None:
+    if _is_blank(value):
         return ()
     if isinstance(value, str):
         return tuple(_parse_sentinels(value))
@@ -971,7 +1082,7 @@ def _id_columns_from_config(value: object) -> tuple[str, ...]:
         TypeError: If ``value`` is not a list or string.
         ValueError: If a name is blank or repeated.
     """
-    if value is None:
+    if _is_blank(value):
         return ()
     if isinstance(value, str):
         return tuple(_split_list(value))
@@ -991,7 +1102,7 @@ def _feature_columns_from_config(value: object) -> tuple[str, ...] | None:
         TypeError: If ``value`` is not a list or string.
         ValueError: If the list is empty or a name is blank.
     """
-    if value is None:
+    if _is_blank(value):
         return None
     if isinstance(value, str):
         names = tuple(_split_list(value))
@@ -1016,7 +1127,7 @@ def _features_from_config(config: Mapping[str, Any]) -> tuple[str, ...] | None:
     """
     columns = _feature_columns_from_config(config.get("feature_columns"))
     file_value = config.get("features_file")
-    if file_value is None:
+    if _is_blank(file_value):
         return columns
     file_path = _require_path(file_value, "features_file")
     if columns is not None:
@@ -1042,15 +1153,15 @@ def _values_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
         "data_path": config.get("data_path", ""),
         "scores_path": config.get("scores_path", ""),
         "output_dir": config.get("output_dir", ""),
-        "problem_type": config.get("problem_type", "binary"),
-        "threshold": config.get("threshold", 0.5),
+        "problem_type": "binary" if _is_blank(config.get("problem_type")) else config.get("problem_type"),
+        "threshold": _config_float(config.get("threshold"), "threshold", 0.5),
         "missing_sentinels": _sentinels_from_config(config.get("missing_sentinels", ())),
         "id_columns": _id_columns_from_config(config.get("id_columns", ())),
         "feature_columns": _features_from_config(config),
-        "max_shap_rows": config.get("max_shap_rows", 5000),
-        "seed": config.get("seed", 42),
-        "n_bins": config.get("n_bins", 20),
-        "log_level": config.get("log_level", "INFO"),
+        "max_shap_rows": _config_int(config.get("max_shap_rows"), "max_shap_rows", 5000),
+        "seed": _config_int(config.get("seed"), "seed", 42),
+        "n_bins": _config_int(config.get("n_bins"), "n_bins", 20),
+        "log_level": "INFO" if _is_blank(config.get("log_level")) else config.get("log_level"),
     }
 
 
@@ -1094,7 +1205,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m population_drift.batch_score",
         description="Score each row of a table and save the score distribution and SHAP importance.",
     )
-    parser.add_argument("--config", help="JSON file of paths and scoring settings. Flags override the file.")
+    parser.add_argument("--config", help="Shell config of paths and scoring settings. Flags override the file.")
     parser.add_argument("--model", help="Fitted LightGBM model (.pkl/.pickle/.joblib/.txt).")
     parser.add_argument("--data", help="Table to score (.csv/.parquet/.feather).")
     parser.add_argument("--scores", help="Where to write one score per row.")
@@ -1164,7 +1275,6 @@ def _request_from_args(args: argparse.Namespace) -> tuple[BatchScoreRequest, str
     Raises:
         FileNotFoundError: If ``--config`` or a feature file does not exist.
         ValueError: If a path or setting is invalid.
-        json.JSONDecodeError: If the config file is not valid JSON.
     """
     config = load_score_config(args.config) if args.config else {}
     values = _values_from_config(config)
@@ -1194,7 +1304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         request, log_level = _request_from_args(args)
-    except (TypeError, ValueError, FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+    except (TypeError, ValueError, FileNotFoundError, OSError) as exc:
         _configure_logging("ERROR")
         logger.error("%s", exc)
         return 2

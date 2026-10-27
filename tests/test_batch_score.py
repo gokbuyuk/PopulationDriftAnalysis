@@ -284,18 +284,35 @@ def test_cli_requires_a_scores_path(tmp_path: Path) -> None:
     _check(code, 2, "exit code when --scores is omitted")
 
 
+def _shell_value(value: object) -> str:
+    """Format one config value as a double-quoted shell assignment value.
+
+    Args:
+        value: A path, number, list, or null.
+
+    Returns:
+        Text placed between double quotes. Lists are comma-separated. Null is empty.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item) for item in value)
+    return str(value)
+
+
 def _config(tmp_path: Path, payload: dict[str, object]) -> Path:
-    """Write a score config and return its path.
+    """Write a shell score config and return its path.
 
     Args:
         tmp_path: Test directory.
-        payload: JSON object.
+        payload: Assignment names and values.
 
     Returns:
         Path of the written config.
     """
-    path = tmp_path / "batch_score.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    lines = [f'{name}="{_shell_value(value)}"' for name, value in payload.items()]
+    path = tmp_path / "batch_score_config.sh"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
@@ -358,7 +375,7 @@ def test_example_config_has_only_known_fields() -> None:
     """The committed template is a valid score config."""
     from population_drift.batch_score import load_score_config
 
-    loaded = load_score_config(Path("examples/batch_score.json"))
+    loaded = load_score_config(Path("examples/batch_score_config.sh"))
     _check(loaded["problem_type"], "binary", "example problem type")
     _check(loaded["model_path"], "data/model.pkl", "example model path")
 

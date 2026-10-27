@@ -115,10 +115,10 @@ A mild label is not a measurement of accuracy on the new population. The run doe
 
 `batch_score` is separate from the comparison. It scores every row of a table that has the model's features and writes the scores, the score distribution, and TreeSHAP feature importance. Call it whenever a new file needs scores.
 
-Edit [examples/batch_score.json](examples/batch_score.json), or a copy of it, and pass that file. Every path and setting the script accepts can live there. A flag on the command line replaces the same field.
+Edit [examples/batch_score_config.sh](examples/batch_score_config.sh), or a copy of it, and pass that file. It is shell assignment syntax (`name="value"`). The scorer reads the assignments and does not execute the file. Leave a value empty to keep the default. A flag on the command line replaces the same field.
 
 ```bash
-PYTHONPATH=src python -m population_drift.batch_score --config examples/batch_score.json
+PYTHONPATH=src python -m population_drift.batch_score --config examples/batch_score_config.sh
 ```
 
 | Field | Meaning |
@@ -127,12 +127,12 @@ PYTHONPATH=src python -m population_drift.batch_score --config examples/batch_sc
 | `data_path` | Table to score (`.csv`, `.parquet`, or `.feather`). |
 | `scores_path` | Per-row score file. The suffix selects the format. |
 | `output_dir` | Directory for the distribution, importance, plot, and `scoring.json`. |
-| `id_columns` | Columns copied onto the score file. A list, or one comma-separated string. |
-| `feature_columns` | Feature list. `null` uses the names stored on the model. |
+| `id_columns` | Columns copied onto the score file, separated by commas. Empty copies none. |
+| `feature_columns` | Comma-separated feature list. Empty uses the names stored on the model. |
 | `features_file` | Text file with one feature name per line. Do not set this and `feature_columns`. |
 | `problem_type` | `binary` or `regression`. |
 | `threshold` | Positive-class cutoff for a binary model. |
-| `missing_sentinels` | Codes treated as missing, for example `[-999]`. |
+| `missing_sentinels` | Codes treated as missing, separated by commas, for example `-999`. |
 | `max_shap_rows` | Maximum rows used for TreeSHAP importance. |
 | `n_bins` | Histogram bins when the scores are not constant. |
 | `seed` | Seed for the SHAP subsample. |
@@ -164,7 +164,7 @@ TreeSHAP uses `shap.TreeExplainer` on at most `--max-shap-rows` rows (default 50
 ```python
 from population_drift.batch_score import request_from_config, run_batch_score
 
-result = run_batch_score(request_from_config("examples/batch_score.json"))
+result = run_batch_score(request_from_config("examples/batch_score_config.sh"))
 result.scores
 ```
 
@@ -212,7 +212,7 @@ PYTHONPATH=src python -m population_drift compare \
 | `src/population_drift/run_drift.ipynb` | Edit paths and run a comparison in Jupyter |
 | `src/population_drift/run_drift.py` | Same runner (`python -m population_drift.run_drift`) |
 | `src/population_drift/batch_score.py` | Score a new table (`python -m population_drift.batch_score`) |
-| `examples/batch_score.json` | Paths and settings for that scoring script |
+| `examples/batch_score_config.sh` | Paths and settings for that scoring script |
 | `src/population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
 | `src/population_drift/report.py` | HTML report (`python -m population_drift.report`) |
 | `examples/make_synthetic_data.py` | Example files only. Not imported by the toolkit. |
