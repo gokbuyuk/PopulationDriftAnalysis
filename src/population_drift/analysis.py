@@ -900,8 +900,71 @@ def cv_auc_with_ci(labels: np.ndarray, scores: np.ndarray, fold_ids: np.ndarray,
     }
 
 
+def shap_feature_importance(
+    model: Any, features: pd.DataFrame, *, max_rows: int, seed: int,
+) -> pd.DataFrame:
+    """Mean absolute TreeSHAP and each feature's share of that total.
+
+    Rows above ``max_rows`` are a seeded subsample. The table is sorted by mean
+    absolute SHAP, largest first. This is the same TreeSHAP summary the domain
+    classifier uses for its drivers.
+
+    Args:
+        model: LightGBM estimator, Booster, or scoring wrapper.
+        features: Rows in model feature order.
+        max_rows: Maximum rows passed to TreeSHAP. Must be an integer >= 1.
+        seed: Seed for the subsample.
+
+    Returns:
+        Columns ``feature``, ``mean_abs_shap``, and ``shap_share``. Shares sum to 1
+        when the total attribution is positive.
+
+    Raises:
+        TypeError: If ``model`` is missing or ``features`` is not a DataFrame.
+        ValueError: If ``features`` has no columns, or ``max_rows`` / ``seed`` is invalid.
+    """
+    _validate_shap_importance_inputs(model, features, max_rows, seed)
+    sample = _subsample(features, max_rows, np.random.default_rng(seed))
+    mean_abs = np.abs(predict_contributions(model, sample)).mean(axis=0)
+    total = float(mean_abs.sum())
+    share = mean_abs / total if total > 0 else np.zeros_like(mean_abs)
+    table = pd.DataFrame({
+        "feature": list(features.columns),
+        "mean_abs_shap": mean_abs,
+        "shap_share": share,
+    })
+    return table.sort_values("mean_abs_shap", ascending=False, ignore_index=True)
+
+
+def _validate_shap_importance_inputs(
+    model: Any, features: pd.DataFrame, max_rows: int, seed: int,
+) -> None:
+    """Reject inputs that TreeSHAP importance cannot explain.
+
+    Args:
+        model: Fitted model.
+        features: Candidate rows.
+        max_rows: Requested sample size.
+        seed: Subsample seed.
+
+    Raises:
+        TypeError: If ``model`` is missing or ``features`` is not a DataFrame.
+        ValueError: If the frame has no columns or the sample settings are invalid.
+    """
+    if model is None:
+        raise TypeError("model is required.")
+    if not isinstance(features, pd.DataFrame):
+        raise TypeError(f"features must be a pandas DataFrame, got {type(features).__name__}.")
+    if features.shape[1] == 0:
+        raise ValueError("features must have at least one column.")
+    if isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows < 1:
+        raise ValueError(f"max_rows must be an integer >= 1, got {max_rows!r}.")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError(f"seed must be an integer, got {seed!r}.")
+
+
 def _domain_classifier_shap_importance(
-    model: Any, features: pd.DataFrame, config: DriftConfig
+    model: Any, features: pd.DataFrame, config: DriftConfig,
 ) -> pd.DataFrame:
     """TreeSHAP feature shares for a fitted domain classifier.
 
@@ -915,24 +978,9 @@ def _domain_classifier_shap_importance(
 
     Raises:
         TypeError: If ``model`` is None or ``features`` is not a DataFrame.
-        ValueError: If ``features`` has no columns.
+        ValueError: If ``features`` has no columns or the SHAP sample settings are invalid.
     """
-    if model is None:
-        raise TypeError("model is required.")
-    if not isinstance(features, pd.DataFrame):
-        raise TypeError(f"features must be a pandas DataFrame, got {type(features).__name__}.")
-    if features.shape[1] == 0:
-        raise ValueError("features must have at least one column.")
-    sample = _subsample(features, config.max_shap_rows, np.random.default_rng(config.seed))
-    mean_abs = np.abs(predict_contributions(model, sample)).mean(axis=0)
-    total = float(mean_abs.sum())
-    share = mean_abs / total if total > 0 else np.zeros_like(mean_abs)
-    table = pd.DataFrame({
-        "feature": list(features.columns),
-        "mean_abs_shap": mean_abs,
-        "shap_share": share,
-    })
-    return table.sort_values("mean_abs_shap", ascending=False, ignore_index=True)
+    return shap_feature_importance(model, features, max_rows=config.max_shap_rows, seed=config.seed)
 
 
 def classifier_two_sample_test(source: pd.DataFrame, target: pd.DataFrame, columns: Sequence[str],

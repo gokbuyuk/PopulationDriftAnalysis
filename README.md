@@ -31,7 +31,7 @@ other_project/
   data/
 ```
 
-From `other_project/`, with `PYTHONPATH=src`, `python -m population_drift` is the analysis command and `python -m population_drift.run_drift` is the path runner. Relative paths in `run_drift.py` and the notebook resolve from `other_project/` (the parent of `src/`). The package must be a direct child of `src/`.
+From `other_project/`, with `PYTHONPATH=src`, `python -m population_drift` is the analysis command, `python -m population_drift.run_drift` is the path runner, and `python -m population_drift.batch_score` scores a new table. Relative paths in `run_drift.py` and the notebook resolve from `other_project/` (the parent of `src/`). The package must be a direct child of `src/`.
 
 ## Compare your own populations
 
@@ -111,6 +111,43 @@ That writes the detailed report (`runs/report.html`, `runs/report.md`, plots und
 
 A mild label is not a measurement of accuracy on the new population. The run does not test whether a given feature vector still maps to the same label. The performance numbers are estimates under the assumptions in [docs/reference.md](docs/reference.md).
 
+## Score a new dataset
+
+`batch_score` is separate from the comparison. It scores every row of a table that has the model's features and writes the scores, the score distribution, and TreeSHAP feature importance. Call it whenever a new file needs scores.
+
+```bash
+PYTHONPATH=src python -m population_drift.batch_score \
+  --model data/model.pkl \
+  --data data/new.parquet \
+  --scores runs/scores.parquet \
+  --out runs/score_summary \
+  --id-cols customer_id
+```
+
+`--scores` is the per-row file (`row_index`, any `--id-cols`, and `score`). CSV, Parquet, and Feather are accepted for `--data` and `--scores`. `--out` receives:
+
+| File | Contents |
+|---|---|
+| `score_distribution.csv` | Row count, mean, standard deviation, and quantiles. Binary runs also record the positive rate at `--threshold`. |
+| `score_histogram.csv` | Equal-width bins (`bin_left`, `bin_right`, `count`, `share`). A constant score is one bin. |
+| `score_distribution.png` | Histogram of the scores. Binary runs mark the threshold. |
+| `feature_importance.csv` | Mean absolute TreeSHAP, its share of the total, and rank. Rank 1 is the largest share. |
+| `scoring.json` | Paths, row counts, and the settings used. |
+
+TreeSHAP uses `shap.TreeExplainer` on at most `--max-shap-rows` rows (default 5000, seed `--seed`). Every input row is still scored. `--features` or `--features-file` is only required when the model file has no feature names. `--missing-sentinels` uses the same codes as `compare`.
+
+```python
+from population_drift.batch_score import BatchScoreRequest, run_batch_score
+
+result = run_batch_score(BatchScoreRequest(
+    model_path="data/model.pkl",
+    data_path="data/new.parquet",
+    scores_path="runs/scores.parquet",
+    output_dir="runs/score_summary",
+))
+result.scores
+```
+
 ## Example data
 
 `examples/make_synthetic_data.py` is not part of the analysis. The package does not import it. It only writes files so the commands above can be run without a real dataset. Output goes to `demo_data/`, which is gitignored.
@@ -154,6 +191,7 @@ PYTHONPATH=src python -m population_drift compare \
 | `src/population_drift/` | Whole toolkit. Copy this directory into another project's `src/`. |
 | `src/population_drift/run_drift.ipynb` | Edit paths and run a comparison in Jupyter |
 | `src/population_drift/run_drift.py` | Same runner (`python -m population_drift.run_drift`) |
+| `src/population_drift/batch_score.py` | Score a new table (`python -m population_drift.batch_score`) |
 | `src/population_drift/analysis.py` | Tasks, baseline, comparison, CLI (`python -m population_drift`) |
 | `src/population_drift/report.py` | HTML report (`python -m population_drift.report`) |
 | `examples/make_synthetic_data.py` | Example files only. Not imported by the toolkit. |
