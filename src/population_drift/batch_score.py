@@ -3,13 +3,17 @@
 This script is separate from the drift comparison. It writes one score per input
 row, plus the score distribution and TreeSHAP feature importance.
 
-    python -m population_drift.batch_score --model model.pkl --data new.csv \\
-        --scores scores.csv --out runs/score_summary
+Edit ``examples/batch_score.json`` and run:
+
+    python -m population_drift.batch_score --config examples/batch_score.json
+
+Flags on the command line replace the same field from the config file.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from dataclasses import dataclass
@@ -42,6 +46,12 @@ logger = logging.getLogger("population_drift.batch_score")
 _RESERVED_COLUMNS = frozenset({"row_index", "score"})
 _TABLE_SUFFIXES = frozenset({".csv", ".parquet", ".pq", ".feather"})
 _PROBLEM_TYPES = frozenset({"binary", "regression"})
+_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
+_CONFIG_FIELDS = frozenset({
+    "model_path", "data_path", "scores_path", "output_dir", "problem_type", "threshold",
+    "missing_sentinels", "id_columns", "feature_columns", "features_file",
+    "max_shap_rows", "seed", "n_bins", "log_level",
+})
 _QUANTILES = (0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)
 _QUANTILE_NAMES = ("p01", "p05", "p25", "p50", "p75", "p95", "p99")
 
@@ -820,30 +830,285 @@ def run_batch_score(request: BatchScoreRequest) -> BatchScoreResult:
     return result
 
 
+def load_score_config(path: str | Path) -> dict[str, Any]:
+    """Read a JSON file of scoring paths and settings.
+
+    Args:
+        path: Config file. Paths inside it are used as written, relative to the
+            working directory, the same way as the command-line flags.
+
+    Returns:
+        The JSON object. Unknown fields are rejected.
+
+    Raises:
+        TypeError: If ``path`` is empty.
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file is not a JSON object or contains an unknown field.
+        json.JSONDecodeError: If the file is not valid JSON.
+    """
+    config_path = Path(_require_path(path, "config"))
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Score config not found: {config_path}")
+    loaded = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError("Score config must be a JSON object.")
+    _reject_unknown_config_fields(loaded)
+    return loaded
+
+
+def request_from_config(path: str | Path) -> BatchScoreRequest:
+    """Build a scoring request from a JSON config file.
+
+    Args:
+        path: Config file. See :func:`load_score_config`.
+
+    Returns:
+        Request for :func:`run_batch_score`. ``log_level`` is checked and not stored.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
+        ValueError: If a field is unknown or a value is invalid.
+        json.JSONDecodeError: If the file is not valid JSON.
+    """
+    values = _values_from_config(load_score_config(path))
+    _require_log_level(values.pop("log_level"))
+    return BatchScoreRequest(**values)
+
+
+def _reject_unknown_config_fields(config: Mapping[str, Any]) -> None:
+    """Reject config keys the scorer does not read.
+
+    Args:
+        config: Parsed JSON object.
+
+    Raises:
+        TypeError: If ``config`` is not a mapping.
+        ValueError: If a key is not a scoring setting.
+    """
+    if not isinstance(config, Mapping):
+        raise TypeError("Score config must be a JSON object.")
+    unknown = sorted(set(config) - _CONFIG_FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown score config fields: {unknown}.")
+
+
+def _require_log_level(value: object) -> str:
+    """Return a logging level name.
+
+    Args:
+        value: Candidate level.
+
+    Returns:
+        ``DEBUG``, ``INFO``, ``WARNING``, or ``ERROR``.
+
+    Raises:
+        ValueError: If ``value`` is not one of those names.
+    """
+    if not isinstance(value, str) or value not in _LOG_LEVELS:
+        raise ValueError("log_level must be DEBUG, INFO, WARNING, or ERROR.")
+    return value
+
+
+def _coerce_sentinel(value: object) -> Any:
+    """Return one missing-value code from a config list.
+
+    Args:
+        value: A number or string code.
+
+    Returns:
+        A float for numeric codes, otherwise the string.
+
+    Raises:
+        ValueError: If ``value`` is null, a boolean, or a non-finite number.
+        TypeError: If ``value`` is not a number or string.
+    """
+    if isinstance(value, bool) or value is None:
+        raise ValueError(f"missing_sentinels contains {value!r}.")
+    if isinstance(value, (int, float)):
+        if not np.isfinite(value):
+            raise ValueError("missing_sentinels must be finite numbers or strings.")
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    raise TypeError(f"missing_sentinels contains {type(value).__name__}.")
+
+
+def _sentinels_from_config(value: object) -> tuple[Any, ...]:
+    """Copy missing-value codes from a config field.
+
+    Args:
+        value: A list of codes, a comma-separated string, or null.
+
+    Returns:
+        Codes passed to :func:`population_drift.analysis.load_table`.
+
+    Raises:
+        TypeError: If ``value`` is not a list or string.
+        ValueError: If a code is null or non-finite.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return tuple(_parse_sentinels(value))
+    if isinstance(value, Sequence):
+        return tuple(_coerce_sentinel(item) for item in value)
+    raise TypeError("missing_sentinels must be a list or a comma-separated string.")
+
+
+def _id_columns_from_config(value: object) -> tuple[str, ...]:
+    """Copy id columns from a config field.
+
+    Args:
+        value: A list of names, a comma-separated string, or null.
+
+    Returns:
+        Column names. Null means no id columns.
+
+    Raises:
+        TypeError: If ``value`` is not a list or string.
+        ValueError: If a name is blank or repeated.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return tuple(_split_list(value))
+    return _as_name_tuple(value, "id_columns")
+
+
+def _feature_columns_from_config(value: object) -> tuple[str, ...] | None:
+    """Copy an explicit feature list from a config field.
+
+    Args:
+        value: A list of names, a comma-separated string, or null.
+
+    Returns:
+        Feature names, or None when the model names should be used.
+
+    Raises:
+        TypeError: If ``value`` is not a list or string.
+        ValueError: If the list is empty or a name is blank.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        names = tuple(_split_list(value))
+        if not names:
+            raise ValueError("feature_columns is empty.")
+        return names
+    return _optional_names(value, "feature_columns")
+
+
+def _features_from_config(config: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """Resolve ``feature_columns`` or ``features_file`` from a config object.
+
+    Args:
+        config: Parsed score config.
+
+    Returns:
+        The feature list, or None when neither field is set.
+
+    Raises:
+        ValueError: If both fields are set, or the feature file is empty.
+        FileNotFoundError: If ``features_file`` does not exist.
+    """
+    columns = _feature_columns_from_config(config.get("feature_columns"))
+    file_value = config.get("features_file")
+    if file_value is None:
+        return columns
+    file_path = _require_path(file_value, "features_file")
+    if columns is not None:
+        raise ValueError("Pass only one of feature_columns and features_file.")
+    return _features_from_file(file_path)
+
+
+def _values_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Map a config object onto request fields plus ``log_level``.
+
+    Args:
+        config: Parsed score config. Missing fields keep the script defaults.
+
+    Returns:
+        Arguments for :class:`BatchScoreRequest` and a ``log_level`` entry.
+
+    Raises:
+        ValueError: If a field is unknown or a feature setting is invalid.
+    """
+    _reject_unknown_config_fields(config)
+    return {
+        "model_path": config.get("model_path", ""),
+        "data_path": config.get("data_path", ""),
+        "scores_path": config.get("scores_path", ""),
+        "output_dir": config.get("output_dir", ""),
+        "problem_type": config.get("problem_type", "binary"),
+        "threshold": config.get("threshold", 0.5),
+        "missing_sentinels": _sentinels_from_config(config.get("missing_sentinels", ())),
+        "id_columns": _id_columns_from_config(config.get("id_columns", ())),
+        "feature_columns": _features_from_config(config),
+        "max_shap_rows": config.get("max_shap_rows", 5000),
+        "seed": config.get("seed", 42),
+        "n_bins": config.get("n_bins", 20),
+        "log_level": config.get("log_level", "INFO"),
+    }
+
+
+def _apply_cli_overrides(values: dict[str, Any], args: argparse.Namespace) -> None:
+    """Replace config values with flags that were actually passed.
+
+    Args:
+        values: Request fields from the config, including defaults.
+        args: Parsed CLI arguments. Omitted flags are absent or None.
+
+    Raises:
+        ValueError: If both feature flags are set.
+    """
+    for flag, field in (
+        ("model", "model_path"), ("data", "data_path"), ("scores", "scores_path"),
+        ("out", "output_dir"), ("problem_type", "problem_type"), ("threshold", "threshold"),
+        ("max_shap_rows", "max_shap_rows"), ("seed", "seed"), ("n_bins", "n_bins"),
+        ("log_level", "log_level"),
+    ):
+        chosen = getattr(args, flag, None)
+        if chosen is not None:
+            values[field] = chosen
+    if getattr(args, "missing_sentinels", None) is not None:
+        values["missing_sentinels"] = tuple(_parse_sentinels(args.missing_sentinels))
+    if getattr(args, "id_cols", None) is not None:
+        values["id_columns"] = tuple(_split_list(args.id_cols))
+    if getattr(args, "features", None) or getattr(args, "features_file", None):
+        values["feature_columns"] = _cli_features(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Argument parser for ``python -m population_drift.batch_score``.
 
+    Omitted flags are left unset so a config file can supply them. Defaults are
+    applied in :func:`_values_from_config`.
+
     Returns:
-        Parser with the model, data, and output arguments.
+        Parser with the config path, model, data, and output arguments.
     """
     parser = argparse.ArgumentParser(
         prog="python -m population_drift.batch_score",
         description="Score each row of a table and save the score distribution and SHAP importance.",
     )
-    parser.add_argument("--model", required=True, help="Fitted LightGBM model (.pkl/.pickle/.joblib/.txt).")
-    parser.add_argument("--data", required=True, help="Table to score (.csv/.parquet/.feather).")
-    parser.add_argument("--scores", required=True, help="Where to write one score per row.")
-    parser.add_argument("--out", required=True, help="Directory for the distribution, importance, and plot.")
+    parser.add_argument("--config", help="JSON file of paths and scoring settings. Flags override the file.")
+    parser.add_argument("--model", help="Fitted LightGBM model (.pkl/.pickle/.joblib/.txt).")
+    parser.add_argument("--data", help="Table to score (.csv/.parquet/.feather).")
+    parser.add_argument("--scores", help="Where to write one score per row.")
+    parser.add_argument("--out", help="Directory for the distribution, importance, and plot.")
     parser.add_argument("--features", help="Comma-separated feature columns. Used when the model has no names.")
     parser.add_argument("--features-file", help="Text file with one feature name per line.")
     parser.add_argument("--id-cols", help="Comma-separated columns to copy onto the score file.")
-    parser.add_argument("--problem-type", choices=["binary", "regression"], default="binary")
-    parser.add_argument("--threshold", type=float, default=0.5, help="Binary positive-class cutoff.")
+    parser.add_argument("--problem-type", choices=["binary", "regression"])
+    parser.add_argument("--threshold", type=float, help="Binary positive-class cutoff. Default: 0.5.")
     parser.add_argument("--missing-sentinels", help="Comma-separated codes to treat as missing, e.g. -999.")
-    parser.add_argument("--max-shap-rows", type=int, default=5000, help="Maximum rows used for TreeSHAP importance.")
-    parser.add_argument("--n-bins", type=int, default=20, help="Histogram bins when scores vary.")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument("--max-shap-rows", type=int, help="Maximum rows used for TreeSHAP importance. Default: 5000.")
+    parser.add_argument("--n-bins", type=int, help="Histogram bins when scores vary. Default: 20.")
+    parser.add_argument("--seed", type=int, help="Seed for the SHAP subsample. Default: 42.")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return parser
 
 
@@ -887,32 +1152,34 @@ def _features_from_file(path: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _request_from_args(args: argparse.Namespace) -> BatchScoreRequest:
-    """Build a request from parsed CLI arguments.
+def _request_from_args(args: argparse.Namespace) -> tuple[BatchScoreRequest, str]:
+    """Build a request from the config file and any overriding flags.
 
     Args:
         args: Parsed ``build_parser`` arguments.
 
     Returns:
-        Request for ``run_batch_score``.
+        The scoring request and the logging level name.
 
     Raises:
-        ValueError: If a feature file or column list is invalid.
+        FileNotFoundError: If ``--config`` or a feature file does not exist.
+        ValueError: If a path or setting is invalid.
+        json.JSONDecodeError: If the config file is not valid JSON.
     """
-    return BatchScoreRequest(
-        model_path=args.model,
-        data_path=args.data,
-        scores_path=args.scores,
-        output_dir=args.out,
-        problem_type=args.problem_type,
-        threshold=args.threshold,
-        missing_sentinels=tuple(_parse_sentinels(args.missing_sentinels)),
-        id_columns=tuple(_split_list(args.id_cols)),
-        feature_columns=_cli_features(args),
-        max_shap_rows=args.max_shap_rows,
-        seed=args.seed,
-        n_bins=args.n_bins,
-    )
+    config = load_score_config(args.config) if args.config else {}
+    values = _values_from_config(config)
+    _apply_cli_overrides(values, args)
+    log_level = _require_log_level(values.pop("log_level"))
+    return BatchScoreRequest(**values), log_level
+
+
+def _configure_logging(level: str) -> None:
+    """Send logs to stderr at ``level``.
+
+    Args:
+        level: ``DEBUG``, ``INFO``, ``WARNING``, or ``ERROR``.
+    """
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -925,11 +1192,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         0 on success, 2 when the inputs cannot be scored.
     """
     args = build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=args.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
     try:
-        run_batch_score(_request_from_args(args))
+        request, log_level = _request_from_args(args)
+    except (TypeError, ValueError, FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+        _configure_logging("ERROR")
+        logger.error("%s", exc)
+        return 2
+    _configure_logging(log_level)
+    try:
+        run_batch_score(request)
     except (TypeError, ValueError, FileNotFoundError, OSError) as exc:
         logger.error("%s", exc)
         return 2

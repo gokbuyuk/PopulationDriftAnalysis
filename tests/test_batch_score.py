@@ -279,6 +279,104 @@ def test_cli_returns_2_when_the_model_file_is_missing(tmp_path: Path) -> None:
 
 
 def test_cli_requires_a_scores_path(tmp_path: Path) -> None:
-    """``--scores`` is required."""
-    with pytest.raises(SystemExit):
-        main(["--model", "model.pkl", "--data", "input.csv", "--out", str(tmp_path)])
+    """``--scores`` is required when no config file supplies it."""
+    code = main(["--model", "model.pkl", "--data", "input.csv", "--out", str(tmp_path)])
+    _check(code, 2, "exit code when --scores is omitted")
+
+
+def _config(tmp_path: Path, payload: dict[str, object]) -> Path:
+    """Write a score config and return its path.
+
+    Args:
+        tmp_path: Test directory.
+        payload: JSON object.
+
+    Returns:
+        Path of the written config.
+    """
+    path = tmp_path / "batch_score.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_config_file_scores_with_the_entered_paths(tmp_path: Path) -> None:
+    """A config file supplies the paths and the id column without CLI flags."""
+    model, frame = _classifier()
+    model_path = _dump(model, tmp_path / "model.pkl")
+    data_path = tmp_path / "input.csv"
+    frame[["id", "x", "z"]].to_csv(data_path, index=False)
+    scores_path = tmp_path / "scores.csv"
+    config_path = _config(tmp_path, {
+        "model_path": str(model_path),
+        "data_path": str(data_path),
+        "scores_path": str(scores_path),
+        "output_dir": str(tmp_path / "summary"),
+        "id_columns": ["id"],
+        "problem_type": "binary",
+        "threshold": 0.5,
+        "missing_sentinels": [],
+        "max_shap_rows": 5000,
+        "n_bins": 10,
+        "seed": 7,
+        "log_level": "INFO",
+    })
+    code = main(["--config", str(config_path)])
+    saved = pd.read_csv(scores_path)
+    _check(code, 0, "exit code")
+    _check(list(saved.columns), ["row_index", "id", "score"], "config score columns")
+    _check((tmp_path / "summary" / "feature_importance.csv").is_file(), True, "config importance file")
+
+
+def test_cli_flag_overrides_the_config_path(tmp_path: Path) -> None:
+    """An explicit flag replaces the same field from the config file."""
+    model, frame = _classifier()
+    model_path = _dump(model, tmp_path / "model.pkl")
+    data_path = tmp_path / "input.csv"
+    frame[["x", "z"]].to_csv(data_path, index=False)
+    config_scores = tmp_path / "from_config.csv"
+    flag_scores = tmp_path / "from_flag.csv"
+    config_path = _config(tmp_path, {
+        "model_path": str(model_path),
+        "data_path": str(data_path),
+        "scores_path": str(config_scores),
+        "output_dir": str(tmp_path / "summary"),
+    })
+    code = main(["--config", str(config_path), "--scores", str(flag_scores)])
+    _check(code, 0, "exit code")
+    _check(flag_scores.is_file(), True, "flag path was written")
+    _check(config_scores.is_file(), False, "config path was not written")
+
+
+def test_config_rejects_an_unknown_field(tmp_path: Path) -> None:
+    """A typo in the config is an input error."""
+    config_path = _config(tmp_path, {"model": "model.pkl"})
+    code = main(["--config", str(config_path)])
+    _check(code, 2, "exit code for an unknown field")
+
+
+def test_example_config_has_only_known_fields() -> None:
+    """The committed template is a valid score config."""
+    from population_drift.batch_score import load_score_config
+
+    loaded = load_score_config(Path("examples/batch_score.json"))
+    _check(loaded["problem_type"], "binary", "example problem type")
+    _check(loaded["model_path"], "data/model.pkl", "example model path")
+
+
+def test_config_features_file_must_cover_the_model(tmp_path: Path) -> None:
+    """``features_file`` in the config is the feature list the model must cover."""
+    model, frame = _classifier()
+    model_path = _dump(model, tmp_path / "model.pkl")
+    data_path = tmp_path / "input.csv"
+    frame[["x", "z"]].to_csv(data_path, index=False)
+    features_path = tmp_path / "features.txt"
+    features_path.write_text("x\n", encoding="utf-8")
+    config_path = _config(tmp_path, {
+        "model_path": str(model_path),
+        "data_path": str(data_path),
+        "scores_path": str(tmp_path / "scores.csv"),
+        "output_dir": str(tmp_path / "summary"),
+        "features_file": str(features_path),
+    })
+    code = main(["--config", str(config_path)])
+    _check(code, 2, "exit code when the feature file drops a model column")
