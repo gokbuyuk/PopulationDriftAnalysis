@@ -759,15 +759,145 @@ def _domain_classifier(config: DriftConfig, seed: int) -> lgb.LGBMClassifier:
                               random_state=seed, n_jobs=config.n_jobs, verbose=-1)
 
 
-def _oof_domain_scores(features: pd.DataFrame, domain: np.ndarray, config: DriftConfig, seed: int) -> np.ndarray:
-    """Out-of-fold P(target | x) with stratified K-fold."""
+def _oof_domain_scores(features: pd.DataFrame, domain: np.ndarray, config: DriftConfig,
+                       seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """Out-of-fold P(target | x) with stratified K-fold.
+
+    Args:
+        features: Feature frame used by the domain classifier.
+        domain: Population labels (0 = source, 1 = target).
+        config: Drift configuration (fold count and LightGBM settings).
+        seed: Random seed for the fold split and model.
+
+    Returns:
+        scores: Out-of-fold predicted P(target | x).
+        fold_ids: Zero-based validation fold index for each row.
+    """
     scores = np.zeros(len(domain))
+    fold_ids = np.empty(len(domain), dtype=int)
     folds = StratifiedKFold(n_splits=config.cv_folds, shuffle=True, random_state=seed)
-    for train_idx, test_idx in folds.split(features, domain):
+    for fold_number, (train_idx, test_idx) in enumerate(folds.split(features, domain)):
         model = _domain_classifier(config, seed)
         model.fit(features.iloc[train_idx], domain[train_idx])
         scores[test_idx] = model.predict_proba(features.iloc[test_idx])[:, 1]
-    return scores
+        fold_ids[test_idx] = fold_number
+    return scores, fold_ids
+
+
+def _fold_influence(labels: np.ndarray, scores: np.ndarray, pi1: float, pi0: float) -> tuple[float, np.ndarray]:
+    """Fold AUC and per-row influence curve with half-credit ties.
+
+    Args:
+        labels: Binary labels in one validation fold.
+        scores: Predicted scores in the same fold.
+        pi1: Full-sample positive rate.
+        pi0: Full-sample negative rate.
+
+    Returns:
+        Fold AUC and the influence value for each row.
+
+    Raises:
+        ValueError: If the fold lacks both classes.
+    """
+    positives = labels == 1
+    negatives = ~positives
+    n_pos = int(positives.sum())
+    n_neg = int(negatives.sum())
+    if n_pos == 0 or n_neg == 0:
+        raise ValueError("Each validation fold must contain both classes.")
+    auc = float(roc_auc_score(labels, scores))
+    pos_sorted = np.sort(scores[positives])
+    neg_sorted = np.sort(scores[negatives])
+    influence = np.empty(len(labels))
+    pos_idx = np.flatnonzero(positives)
+    neg_idx = np.flatnonzero(negatives)
+    pos_s, neg_s = scores[pos_idx], scores[neg_idx]
+    below = np.searchsorted(neg_sorted, pos_s, side="left")
+    equal_neg = np.searchsorted(neg_sorted, pos_s, side="right") - below
+    influence[pos_idx] = ((below + 0.5 * equal_neg) / n_neg - auc) / pi1
+    above = n_pos - np.searchsorted(pos_sorted, neg_s, side="right")
+    equal_pos = (np.searchsorted(pos_sorted, neg_s, side="right")
+                 - np.searchsorted(pos_sorted, neg_s, side="left"))
+    influence[neg_idx] = ((above + 0.5 * equal_pos) / n_pos - auc) / pi0
+    return auc, influence
+
+
+def _validate_cv_auc_inputs(labels: np.ndarray, scores: np.ndarray, fold_ids: np.ndarray,
+                            confidence: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Validate inputs for :func:`cv_auc_with_ci`.
+
+    Args:
+        labels: Binary outcomes.
+        scores: Predicted scores.
+        fold_ids: Validation fold index per row.
+        confidence: Confidence level in (0, 1).
+
+    Returns:
+        ``labels``, ``scores``, ``fold_ids`` and the unique fold identifiers.
+
+    Raises:
+        ValueError: If any argument is invalid.
+    """
+    labels = np.asarray(labels)
+    scores = np.asarray(scores, dtype=float)
+    fold_ids = np.asarray(fold_ids)
+    if labels.shape != scores.shape or labels.shape != fold_ids.shape:
+        raise ValueError("labels, scores and fold_ids must have the same length.")
+    if labels.size == 0:
+        raise ValueError("labels must be non-empty.")
+    if not np.isfinite(scores).all():
+        raise ValueError("scores must be finite.")
+    if not set(np.unique(labels)).issubset({0, 1}):
+        raise ValueError("labels must be binary 0/1.")
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}.")
+    unique_folds = np.unique(fold_ids)
+    if unique_folds.size < 2:
+        raise ValueError("fold_ids must contain at least two folds.")
+    if not (0.0 < float(np.mean(labels == 1)) < 1.0):
+        raise ValueError("labels must contain both classes.")
+    return labels, scores, fold_ids, unique_folds
+
+
+def cv_auc_with_ci(labels: np.ndarray, scores: np.ndarray, fold_ids: np.ndarray,
+                   confidence: float = 0.95) -> dict[str, float]:
+    """Mean fold AUC with LeDell et al. (2015) influence-curve confidence interval.
+
+    Ties count as 0.5 so the influence values match ``roc_auc_score``; the R package
+    ``cvAUC`` uses a strict inequality instead. Class rates ``pi1`` and ``pi0`` use the
+    full sample. Coverage can fall below the nominal rate for n around 1000
+    (LeDell, Petersen and van der Laan, Electronic Journal of Statistics 9:1583-1607).
+
+    Args:
+        labels: Binary outcomes (0/1) aligned with ``scores``.
+        scores: Out-of-fold predicted scores.
+        fold_ids: Validation fold index for each row.
+        confidence: Confidence level in (0, 1).
+
+    Returns:
+        Dictionary with ``cv_auc``, ``cv_auc_se``, ``cv_auc_ci_low`` and ``cv_auc_ci_high``.
+
+    Raises:
+        ValueError: If inputs are invalid, a fold lacks a class, or ``confidence`` is outside (0, 1).
+    """
+    labels, scores, fold_ids, unique_folds = _validate_cv_auc_inputs(labels, scores, fold_ids, confidence)
+    pi1 = float(np.mean(labels == 1))
+    pi0 = 1.0 - pi1
+    fold_aucs, fold_ic2 = [], []
+    for fold in unique_folds:
+        mask = fold_ids == fold
+        auc_v, influence = _fold_influence(labels[mask], scores[mask], pi1, pi0)
+        fold_aucs.append(auc_v)
+        fold_ic2.append(float(np.mean(np.square(influence))))
+    cv_auc = float(np.mean(fold_aucs))
+    se = float(np.sqrt(np.mean(fold_ic2) / labels.size))
+    z = float(stats.norm.ppf(0.5 + confidence / 2.0))
+    return {
+        "cv_auc": cv_auc,
+        "cv_auc_se": se,
+        "cv_auc_ci_low": float(max(0.0, cv_auc - z * se)),
+        "cv_auc_ci_high": float(min(1.0, cv_auc + z * se)),
+    }
 
 
 def _domain_classifier_shap_importance(
@@ -810,7 +940,8 @@ def classifier_two_sample_test(source: pd.DataFrame, target: pd.DataFrame, colum
     """Classifier two-sample test (adversarial validation).
 
     A LightGBM classifier predicts population membership; H0 (same joint distribution) implies an
-    out-of-fold AUC of 0.5. Reports AUC with stratified bootstrap CI, Mann-Whitney p-value on the
+    out-of-fold AUC of 0.5. Reports the pooled OOF AUC (used for baseline and verdict), the mean
+    of fold AUCs with a LeDell et al. (2015) influence-curve 95% CI, Mann-Whitney p-value on the
     out-of-fold scores, a permutation p-value (``n_classifier_permutations`` refits) and the features
     driving the separation (TreeSHAP via ``shap.TreeExplainer``).
 
@@ -826,32 +957,24 @@ def classifier_two_sample_test(source: pd.DataFrame, target: pd.DataFrame, colum
         raise ValueError("Too few rows for the classifier two-sample test.")
     features = pd.concat([xs, xt], ignore_index=True)
     domain = np.r_[np.zeros(len(xs), dtype=int), np.ones(len(xt), dtype=int)]
-    scores = _oof_domain_scores(features, domain, config, config.seed)
+    scores, fold_ids = _oof_domain_scores(features, domain, config, config.seed)
     auc = roc_auc_score(domain, scores)
+    cv_stats = cv_auc_with_ci(domain, scores, fold_ids)
     mw_p = stats.mannwhitneyu(scores[domain == 1], scores[domain == 0], alternative="greater").pvalue
 
     null_auc = np.array([])
     permutation_p = np.nan
     if config.n_classifier_permutations > 0:
         null_auc = np.array([
-            roc_auc_score(perm, _oof_domain_scores(features, perm, config, config.seed + i + 1))
+            roc_auc_score(perm, _oof_domain_scores(features, perm, config, config.seed + i + 1)[0])
             for i, perm in enumerate(rng.permutation(domain) for _ in range(config.n_classifier_permutations))
         ])
         permutation_p = (1 + np.sum(null_auc >= auc)) / (1 + len(null_auc))
 
-    ci_low = ci_high = np.nan
-    if config.n_bootstrap > 0:
-        idx_s, idx_t = np.flatnonzero(domain == 0), np.flatnonzero(domain == 1)
-        boot = []
-        for _ in range(config.n_bootstrap):
-            sample = np.r_[rng.choice(idx_s, len(idx_s)), rng.choice(idx_t, len(idx_t))]
-            boot.append(roc_auc_score(domain[sample], scores[sample]))
-        ci_low, ci_high = np.percentile(boot, [2.5, 97.5])
-
     full_model = _domain_classifier(config, config.seed).fit(features, domain)
     importance = _domain_classifier_shap_importance(full_model, features, config)
 
-    main = pd.DataFrame([{"feature": GLOBAL_FEATURE, "auc": auc, "auc_ci_low": ci_low, "auc_ci_high": ci_high,
+    main = pd.DataFrame([{"feature": GLOBAL_FEATURE, "auc": auc, **cv_stats,
                           "mannwhitney_p": mw_p, "permutation_p": permutation_p,
                           "n_permutations": len(null_auc), "n_source_rows": len(xs), "n_target_rows": len(xt)}])
     bins = np.linspace(0, 1, 41)
