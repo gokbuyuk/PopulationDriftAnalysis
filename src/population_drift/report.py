@@ -141,7 +141,12 @@ ACRONYMS: dict[str, _Acronym] = {
     "IC": _Acronym("influence curve", "Estimates", "How much one observation pulls an estimator. The spread of those pulls is the asymptotic standard error for domain-classifier cross-validated area under the curve (CV AUC) (LeDell et al. 2015)."),
     "CBPE": _Acronym("confidence-based performance estimation", "Estimates", "Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores."),
     "BBSE": _Acronym("black-box shift estimation", "Estimates", "Estimated new class prior. Usable only if P(x given y) is unchanged."),
-    "CI": _Acronym("confidence interval", "Estimates", "Range for an estimate. Domain-classifier CV AUC uses an influence-curve CI; weighted performance, CBPE, and BBSE use bootstrap CIs. Performance is severe only when the whole interval lies past the tolerance."),
+    "CI": _Acronym(
+        "confidence interval", "Estimates",
+        "Range for an estimate. Domain-classifier CV AUC uses an influence-curve CI. Precision, recall, F1, "
+        "the false-positive rate, and each predicted-positive rate use a Wilks profile-likelihood CI "
+        "(Urlus et al. 2023). Weighted performance, CBPE, and BBSE use bootstrap CIs. "
+        "Performance is severe only when the whole interval lies past the tolerance."),
     "RMSE": _Acronym("root mean squared error", "Estimates", "Square root of mean squared error. Larger is worse."),
     "MAE": _Acronym("mean absolute error", "Estimates", "Average absolute error. Larger is worse."),
 }
@@ -161,6 +166,11 @@ _STATISTICAL_TESTS: tuple[tuple[str, str], ...] = (
      "The z variance is 1.06/(n−3) in each sample (Fieller, Hartley, and Pearson 1957). Adjusted p below α: that pair changed."),
     ("Binomial test", "One-sided test that the new share outside the training 0.5–99.5% range, or the isolation-forest outlier share, "
      "exceeds the share expected from the training rule. Adjusted p below α: more new rows fall outside support."),
+    ("Wilks profile likelihood",
+     "Interval for one confusion-matrix metric. The profile log-likelihood ratio is compared with a chi-square "
+     "distribution with one degree of freedom (Urlus et al. 2023). Used for precision, recall, F1, and the "
+     "false-positive rate on the labelled set, and for each predicted-positive rate. Not a test that the new "
+     "population matches the training population."),
     ("Baseline empirical p", "Share of random reference splits at least as large as the new population: "
      "(1 + such rounds) / (1 + rounds). Beyond baseline means the statistic exceeds that reference's 95th percentile."),
 )
@@ -2340,6 +2350,22 @@ def _baseline_bbse(signal: dict[str, Any], run: ComparisonRun) -> tuple[str, str
             "The estimator assumes P(x|y) is unchanged. No sampling baseline is computed for it.")
 
 
+def _baseline_operating_point(signal: dict[str, Any], run: ComparisonRun) -> tuple[str, str]:
+    """Comparison note for the labelled operating-point intervals.
+
+    Args:
+        signal: Operating-point signal. Unused except to keep the dispatcher uniform.
+        run: Comparison. Unused; the interval is not a baseline percentile.
+
+    Returns:
+        The interval name, and why it is not a sampling percentile of the baseline rounds.
+    """
+    del signal, run
+    return ("Wilks 95% profile interval",
+            "Test-set sampling uncertainty at the decision threshold (Urlus et al. 2023). "
+            "Not a percentile of the baseline rounds, and not performance on the new population.")
+
+
 def _baseline_calibration(signal: dict[str, Any], run: ComparisonRun) -> tuple[str, str]:
     """ECE cutoff that downgrades confidence-based performance estimation.
 
@@ -2369,6 +2395,7 @@ _SIGNAL_BASELINES = (
     ("Values outside", _baseline_range),
     ("Model score distribution", _baseline_score),
     ("Predicted positive rate", _baseline_positive_rate),
+    ("Operating-point sampling", _baseline_operating_point),
     ("Model attributions", _baseline_shap),
     ("effective sample size", _baseline_ess),
     ("importance weighting", _baseline_performance),
@@ -3057,6 +3084,13 @@ def section_performance(run: ComparisonRun) -> Section | None:
                      + (f"Expected calibration error (ECE) {ece:.3f}: " + ("acceptable." if ece <= 0.05 else
                                                          "<b>too high, so confidence-based performance estimation (CBPE) estimates are unreliable</b>.")
                         if np.isfinite(ece) else ""))
+    operating = run.table("calibration", "operating_point")
+    if not operating.empty:
+        items.append("<b>Operating-point sampling uncertainty</b> (Urlus et al. 2023): Wilks profile-likelihood "
+                     "95% confidence intervals for precision, recall, F1, and the false-positive rate on the labelled "
+                     "reference at the decision threshold. This is sampling uncertainty of that labelled set. "
+                     "It is not performance on the new population. Quote the Wilks interval; the normal standard "
+                     "error is stored only as a check and is invalid when a cell count is small or the estimate is 0 or 1.")
     if not label_shift.empty:
         shifted = str(label_shift["prior_shift_detected"].iloc[0]) == "True"
         items.append(f"<b>Black-box shift estimation (BBSE)</b> (assumes P(x|y) unchanged): estimated positive rate "
@@ -3070,9 +3104,11 @@ def section_performance(run: ComparisonRun) -> Section | None:
             "when the whole 95% confidence interval (CI) is beyond tolerance.</p>")
     note = _section_baseline(run, "effective sample size", "importance weighting", "CBPE", "BBSE", "calibration")
     plots = _reference_estimate_callout(run) + plot_calibration(run)
+    operating_table = details("Operating-point intervals", table_html(operating)) if not operating.empty else ""
     tables = (details("Importance-weighted estimates", table_html(weighted) + table_html(summary))
               + details("Confidence-based performance estimation (CBPE) estimates", table_html(cbpe))
-              + details("Calibration and prior shift", table_html(calibration) + table_html(label_shift)))
+              + details("Calibration and prior shift", table_html(calibration) + table_html(label_shift))
+              + operating_table)
     return _section_with_errors(
         run, "performance", "Estimated performance (no labels)",
         _pair_line(run, "calibration", "weighted_performance", "cbpe", "label_shift") + plots + text + note + tables,

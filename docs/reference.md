@@ -100,7 +100,7 @@ One function per question. A failing task is logged in `metadata["failed_tasks"]
 | Did rank correlations change? | Spearman matrices. Permutation test on the Frobenius norm of the upper triangle. Per pair, Fisher z with variance 1.06/(n−3), then BH. Capped at 20,000 rows. | A global norm can hide one large pair change, and one pair can be a term the model uses. |
 | Are values outside the training tails? | Share of new values outside the source 0.5%–99.5% quantiles, one-sided binomial test against the expected tail share, BH across features. Also the share beyond the source min and max. | Quantiles, so one training outlier does not define the support. |
 | What share of new rows has no training neighbors? | Isolation Forest fitted on 70% of source rows. The threshold is the 1% quantile of scores on the held-out 30%, so the null share is 1% by construction. One-sided binomial test. Capped at 100,000 rows. | A product of per-feature ranges can still leave holes. |
-| Did the score distribution change? | KS and PSI on predicted probabilities. Two-proportion z-test and Cohen’s h on the positive rate at the operating threshold, and the same test for the share of scores within ±0.05 of that threshold. | A small location shift can move the approval rate without a large PSI. The two questions are separate signals. |
+| Did the score distribution change? | KS and PSI on predicted probabilities. Two-proportion z-test and Cohen’s h on the positive rate at the operating threshold, and the same test for the share of scores within ±0.05 of that threshold. Each positive rate also has a Wilks binomial 95% confidence interval. | A small location shift can move the approval rate without a large PSI. The two questions are separate signals. The interval describes sampling uncertainty of that rate; the verdict still uses Cohen’s h and the z-test. |
 | Did the reasons for the scores change? | TreeSHAP via `shap.TreeExplainer`, at most 5,000 rows per population. KS on contributions. Spearman correlation of mean absolute SHAP. | A similar score histogram can be produced by different features. |
 
 ### Performance without labels
@@ -109,10 +109,18 @@ If these rows disagree, do not quote one of them as the performance on the new p
 
 | Estimator | What it computes | Assumption |
 |---|---|---|
-| Calibration | Brier, ECE on 10 equal-width bins, slope and intercept of a logistic regression of the label on logit(score). | Computed on the evaluation set in a dual run. Optimistic if those rows were used to fit the model. ECE > 0.05 downgrades CBPE to `info`. |
+| Calibration | Brier, ECE on 10 equal-width bins, slope and intercept of a logistic regression of the label on logit(score). The same labelled rows, at `decision_threshold`, also produce Wilks intervals for precision, recall, F1, and the false-positive rate (`operating_point`). | Computed on the evaluation set in a dual run. Optimistic if those rows were used to fit the model. ECE > 0.05 downgrades CBPE to `info`. The Wilks intervals are sampling uncertainty of this labelled set, not performance on the new population, and they do not enter the verdict. |
 | Importance weighting | Domain-classifier OOF scores become weights `w = p/(1−p) × n_source/n_target`, clipped at the 0.99 quantile. Kish ESS. Weighted AUC, Brier, and log loss (binary) or RMSE and MAE (regression), with a bootstrap interval, compared with the unweighted metrics on the same rows. | Covariate shift only: P(y\|x) is unchanged and the domain classifier estimates the density ratio. The factor `n_source/n_target` converts classifier odds into a density ratio when the groups differ in size. |
 | CBPE | Expected AUC from pairs of predicted probabilities (ties count as 0.5). The reference is the same functional on the source scores, reported next to the realized source AUC. | Calibrated probabilities and an unchanged map from features to labels. Using the same functional on both populations avoids calling a calibration defect a population shift. |
 | BBSE | Source confusion matrix C, new prediction rates μ, weights C⁻¹μ, prior renormalized. Interval by resampling both populations. | P(x\|y) is unchanged (label shift). Under covariate shift this estimator is the wrong model. |
+
+### Operating-point sampling uncertainty
+
+Urlus et al. (2023) model one confusion matrix as a multinomial sample and recommend Wilks’ profile likelihood-ratio interval. For one metric the ratio is compared with a chi-square distribution with one degree of freedom. The 95% critical value is 3.841. Recall, given the positive rows, and the false-positive rate, given the negative rows, reduce to the binomial profile interval (their Appendix G). Precision and F1 profile the remaining nuisance parameter on the precision-recall parameterization (their equation 6). The joint precision-recall region uses two degrees of freedom (critical value 5.991); that region is the object in their figures and is not what the tables quote.
+
+The bivariate-normal standard error is their equations 13–15 for precision and recall, equation 45 for the false-positive rate, and the delta method for F1. `normal_valid` is false when `n p (1-p) < 10` or the estimate is 0 or 1. Quote `ci_low` and `ci_high`. The normal standard error is a check for large cell counts.
+
+Realised precision, recall, and F1 on the confidence-based performance estimation (CBPE) table carry the same labelled-source interval in `source_realized_ci_low` and `source_realized_ci_high`. The CBPE bootstrap interval stays on `ci_low` and `ci_high`: that interval resamples the unlabelled scores, which is a different estimand. The predicted-positive rate uses the binomial profile interval on each population. None of these intervals is compared with `performance_tolerance`.
 
 ### Domain-classifier AUC and the influence-curve interval
 
@@ -156,6 +164,8 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 
 `runs/comparison/tables/<task>__<table>.csv` is the full table for that task. Global rows use `feature="__global__"`. Registered comparison metrics are oriented so that larger means more drift (absolute SMD, absolute log variance ratio, `1 − ρ`, `1 − ESS ratio`, degradation).
 
+`tables/calibration__operating_point.csv` has one row per metric (`precision`, `recall`, `fpr`, `f1`) with `estimate`, `ci_low`, `ci_high`, `method` (`wilks_profile_chi2_1`), `normal_se`, `normal_valid`, the threshold, and the confusion-matrix counts. `prediction_drift` stores `positive_rate_source_ci_low`, `positive_rate_source_ci_high`, `positive_rate_target_ci_low`, and `positive_rate_target_ci_high`.
+
 `metadata.json` records sizes, the feature list and types, whether a model and a label were supplied, the full config, failed tasks, elapsed time, and library versions.
 
 `--report` writes a standalone HTML file with embedded plots and a markdown copy beside it. The markdown file references PNG files in `{report stem}_plots/`. A comparison also writes a short decision brief at `{report stem}_short.html` / `{report stem}_short.md` (plots under `{report stem}_short_plots/`) with the verdict, counted signals, flagged features, and the plots needed to decide whether to score new data. The detailed report keeps methods, full tables, and baseline diagnostics.
@@ -167,6 +177,7 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 - Friedman, J. (2003). On multivariate goodness-of-fit and two-sample testing.
 - Hanley, J. A. and McNeil, B. J. (1982). The meaning and use of the area under a receiver operating characteristic curve. *Radiology*.
 - LeDell, E., Petersen, M., and van der Laan, M. (2015). Computationally efficient confidence intervals for cross-validated area under the ROC curve estimates. *Electronic Journal of Statistics*, 9, 1583–1607. doi:10.1214/15-EJS1035.
+- Urlus, R. E. Q., Baak, M. A., Collot, S., and Fridman Rojas, I. (2023). Pointwise sampling uncertainties on the Precision-Recall curve. *Proceedings of AISTATS*, PMLR 206. https://proceedings.mlr.press/v206/urlus23a.html
 - Lopez-Paz, D. and Oquab, M. (2017). Revisiting classifier two-sample tests. International Conference on Learning Representations (ICLR).
 - Siddiqi, N. (2006). *Credit Risk Scorecards*. PSI conventions 0.10 and 0.25.
 
@@ -190,6 +201,7 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 | Mann–Whitney | Test that domain-classifier scores are higher for new rows than for training rows. For fixed scores this is the same comparison as AUC. The verdict uses the permutation p, because the scores were fitted on these rows. |
 | Fisher z | Test that one Spearman correlation differs between the samples. The z variance is 1.06/(n−3) in each sample (Fieller, Hartley, and Pearson 1957). Adjusted p below α: that pair changed. |
 | Binomial test | One-sided test that the new share outside the training 0.5–99.5% range, or the isolation-forest outlier share, exceeds the share expected from the training rule. Adjusted p below α: more new rows fall outside support. |
+| Wilks profile likelihood | Interval for one confusion-matrix metric. The profile log-likelihood ratio is compared with a chi-square distribution with one degree of freedom (Urlus et al. 2023). Used for precision, recall, F1, and the false-positive rate on the labelled set, and for each predicted-positive rate. Not a test that the new population matches the training population. |
 | Baseline empirical p | Share of random reference splits at least as large as the new population: (1 + such rounds) / (1 + rounds). Beyond baseline means the statistic exceeds that reference's 95th percentile. |
 
 ### Magnitudes
@@ -229,6 +241,6 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 |---|---|---|
 | CBPE | confidence-based performance estimation | Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores. |
 | BBSE | black-box shift estimation | Estimated new class prior. Usable only if P(x given y) is unchanged. |
-| CI | confidence interval | Range for an estimate. Domain-classifier `cv_auc` uses an influence-curve CI; weighted performance, CBPE, and BBSE use bootstrap CIs. Performance is severe only when the whole interval lies past the tolerance. |
+| CI | confidence interval | Range for an estimate. Domain-classifier `cv_auc` uses an influence-curve CI. Precision, recall, F1, the false-positive rate, and each predicted-positive rate use a Wilks profile-likelihood CI (Urlus et al. 2023). Weighted performance, CBPE, and BBSE use bootstrap CIs. Performance is severe only when the whole interval lies past the tolerance. |
 | RMSE | root mean squared error | Square root of mean squared error. Larger is worse. |
 | MAE | mean absolute error | Average absolute error. Larger is worse. |

@@ -942,7 +942,32 @@ def _validity_diagnostics(run: ComparisonRun) -> list[str]:
             f"Realized reference AUC {_metric_num(_finite(realized.get('source_realized')))}. "
             "CBPE compares estimated AUC with estimated AUC."
         )
+    operating_line = _operating_point_line(run)
+    if operating_line:
+        lines.append(operating_line)
     return lines
+
+
+def _operating_point_line(run: ComparisonRun) -> str:
+    """Wilks interval for labelled precision, when that table was stored.
+
+    Args:
+        run: Loaded comparison.
+
+    Returns:
+        One sentence, or an empty string when precision was not stored.
+    """
+    row = _metric_series(run.table("calibration", "operating_point"), "precision")
+    if row is None:
+        return ""
+    estimate, low, high = _finite(row.get("estimate")), _finite(row.get("ci_low")), _finite(row.get("ci_high"))
+    if not math.isfinite(estimate):
+        return ""
+    return (
+        f"Labelled operating-point precision {_metric_num(estimate)} "
+        f"[{_metric_num(low)}–{_metric_num(high)}], Wilks 95% confidence interval. "
+        "This is sampling uncertainty on the labelled reference, not performance on the new population."
+    )
 
 
 def _confirm_lines(run: ComparisonRun, metrics: Sequence[PerformanceView]) -> list[str]:
