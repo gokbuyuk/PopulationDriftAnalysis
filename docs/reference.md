@@ -93,7 +93,7 @@ One function per question. A failing task is logged in `metadata["failed_tasks"]
 | Did a categorical per-feature distribution change? | Chi-square after merging levels with expected count below 5. Cramér’s V, JS (base 2), PSI. Labels `1` and `1.0` are treated as the same level. | Chi-square is the test of a shared discrete distribution. V does not grow with sample size. |
 | Will the model see an untrained level? | Share of new rows whose level is absent from training. | LightGBM sends an unseen level down a default path. |
 | Did missingness change? | Two-proportion z-test and Cohen’s h per feature. Separately, chi-square and JS on the joint missingness pattern. | Observed values can match while the missing rate changes, and LightGBM’s missing branch then applies to a different fraction of rows. |
-| Can any function of the features tell the populations apart? | Domain classifier model: LightGBM, 200 trees, learning rate 0.05, 31 leaves, row and column subsampling 0.8, L2 penalty 1. Label is population membership, never the business target. Metric is stratified 5-fold OOF ROC AUC. | Per-feature tests miss a shift that exists only as a combination. The AUC does not depend on a cutoff and stays 0.5 when the score distributions match, which matters because the group sizes differ. OOF scoring stops the trees being graded on rows they just fitted. Hyperparameters are fixed, so the AUC is not the winner of a model search (Friedman 2003; Lopez-Paz and Oquab 2017). |
+| Can any function of the features tell the populations apart? | Domain classifier model: LightGBM, 200 trees, learning rate 0.05, 31 leaves, row and column subsampling 0.8, L2 penalty 1. Label is population membership, never the business target. Stratified 5-fold OOF scores. Report pooled OOF ROC AUC (`auc`, used for baseline and verdict) and the mean of fold AUCs (`cv_auc`) with a LeDell et al. (2015) influence-curve 95% CI (see below). | Per-feature tests miss a shift that exists only as a combination. The AUC does not depend on a cutoff and stays 0.5 when the score distributions match, which matters because the group sizes differ. OOF scoring stops the trees being graded on rows they just fitted. Hyperparameters are fixed, so the AUC is not the winner of a model search (Friedman 2003; Lopez-Paz and Oquab 2017). |
 | Could that AUC arise under no shift? | Two nulls. Shuffle the population label and refit the cross-validation (`n_classifier_permutations`, default 20). And the training-split baseline above. A Mann–Whitney test on the held-out scores is stored; for fixed scores it is the same comparison as AUC (Hanley and McNeil 1982) but it treats the scores as given, so the verdict uses the permutation p-value. | The permutation null breaks only the population label. The baseline asks whether the same AUC appears when both groups are random pieces of the training population. |
 | Which inputs drive that separation? | Gain (total loss reduction) from one fit on all rows, as a share of total gain. | Descriptive of that fit. Not the business model’s SHAP, and not a causal ranking. |
 | Do two nonparametric distances agree? | Unbiased MMD², RBF kernel, median-heuristic bandwidth; energy distance. Permutation p-values. Continuous columns are source-median-imputed and source-standardized. Categoricals are one-hot of the top 10 source levels. Each group is capped at 2,000 rows. | These do not depend on trees. The row cap limits power. They cannot turn the verdict severe. |
@@ -114,6 +114,21 @@ If these rows disagree, do not quote one of them as the performance on the new p
 | CBPE | Expected AUC from pairs of predicted probabilities (ties count as 0.5). The reference is the same functional on the source scores, reported next to the realized source AUC. | Calibrated probabilities and an unchanged map from features to labels. Using the same functional on both populations avoids calling a calibration defect a population shift. |
 | BBSE | Source confusion matrix C, new prediction rates μ, weights C⁻¹μ, prior renormalized. Interval by resampling both populations. | P(x\|y) is unchanged (label shift). Under covariate shift this estimator is the wrong model. |
 
+### Domain-classifier AUC and the influence-curve interval
+
+The domain classifier produces one out-of-fold (OOF) score per row. Two AUC summaries are stored:
+
+| Column | Definition | Role |
+|---|---|---|
+| `auc` | ROC AUC on the pooled OOF scores | Compared to the baseline 95th percentile and to the mild/moderate/severe bands. Unchanged from earlier releases. |
+| `cv_auc` | Mean of the per-fold AUCs | Point estimate for the LeDell et al. (2015) interval (`cv_auc_se`, `cv_auc_ci_low`, `cv_auc_ci_high`). |
+
+Under stratified folds of similar size the two points usually agree to the third decimal. The interval is attached only to `cv_auc`, because that is the estimator the derivation targets.
+
+**What an influence curve is.** An influence curve (also called an influence function) is a function of a single observation that says how much that observation pulls an estimator. For many estimators used in statistics and machine learning, the estimation error is asymptotically a sample average of those pulls: after scaling by √n, the error converges to a normal law whose variance is the variance of the influence curve. Estimating that variance from the observed influence values on the data gives a standard error without refitting the model and without bootstrap resampling. One observation with a large influence value moves the estimate more; the spread of the influence values across the sample is the SE.
+
+**What LeDell et al. compute.** They derive the influence curve of fold-wise AUC and average it across the V validation folds. Class rates use the full sample; ranking fractions that enter the influence curve stay inside each fold (each fold has its own fitted scorer). Ties count as 0.5 so the influence values match `sklearn.metrics.roc_auc_score`. The 95% interval is the mean fold AUC ± 1.96 × SE, clipped to [0, 1], with SE = √(mean of fold-wise mean(IC²) / n). This replaces the earlier stratified bootstrap of frozen OOF scores, which treated the scores as fixed and therefore answered a different question (uncertainty of the Mann–Whitney statistic given the scores, not uncertainty of the cross-validated AUC). Coverage in their simulations is about 0.92–0.93 at n = 1000 and about 0.94–0.95 at n ≥ 5000. The interval does not use `n_bootstrap`. Importance-weighted AUC and CBPE keep their bootstrap intervals; this influence curve does not cover those functionals.
+
 ## Configuration a user is expected to set
 
 | Field | Default | Set it from |
@@ -125,7 +140,7 @@ If these rows disagree, do not quote one of them as the performance on the new p
 | `subset_size` | `n_new` inside `compare` | Row count of the new population. With `--test`, each reference is matched separately. |
 | `seed` | 42 | Fix and record it. |
 | `n_classifier_permutations` | 20 | Smallest permutation p-value is 1/21. Raising this refits the domain classifier model each time |
-| `n_bootstrap` / `n_permutations` | 200 / 100 | Comparison run only; baseline rounds set these to 0 |
+| `n_bootstrap` / `n_permutations` | 200 / 100 | Comparison run only; baseline rounds set these to 0. `n_bootstrap` drives PSI/Wasserstein, weighted performance, CBPE, and BBSE intervals — not the domain-classifier `cv_auc` CI (that uses the influence curve). |
 
 Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifier_rows` 200,000, `max_shap_rows` 5,000, `max_iforest_rows` 100,000. A shift that is visible only above a cap can be missed by that task.
 
@@ -149,6 +164,7 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 - Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences*.
 - Friedman, J. (2003). On multivariate goodness-of-fit and two-sample testing.
 - Hanley, J. A. and McNeil, B. J. (1982). The meaning and use of the area under a receiver operating characteristic curve. *Radiology*.
+- LeDell, E., Petersen, M., and van der Laan, M. (2015). Computationally efficient confidence intervals for cross-validated area under the ROC curve estimates. *Electronic Journal of Statistics*, 9, 1583–1607. doi:10.1214/15-EJS1035.
 - Lopez-Paz, D. and Oquab, M. (2017). Revisiting classifier two-sample tests. International Conference on Learning Representations (ICLR).
 - Siddiqi, N. (2006). *Credit Risk Scorecards*. PSI conventions 0.10 and 0.25.
 
@@ -193,11 +209,13 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 
 | Acronym | Meaning | Reading |
 |---|---|---|
-| AUC | area under the curve | Area under the ROC curve. 0.5 means no separation. Domain classifier: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe. |
+| AUC | area under the curve | Area under the ROC curve. 0.5 means no separation. Domain classifier pooled OOF AUC: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe. |
+| CV AUC | cross-validated area under the curve | Mean of the per-fold OOF AUCs (`cv_auc`). Target of the LeDell influence-curve CI. |
 | ROC | receiver operating characteristic | True-positive rate against false-positive rate across cutoffs. AUC is its area. |
 | SHAP | Shapley additive explanations | A feature's additive contribution to one score. Mean absolute SHAP rank correlation below 0.80: the ranking of reasons changed. |
 | TreeSHAP | Shapley additive explanations from trees | SHAP for a tree model, from LightGBM pred_contrib. |
 | OOF | out-of-fold | Score from a model that did not train on that row. |
+| IC | influence curve | Function of one observation that gives the first-order effect of that row on an estimator. For domain-classifier CV AUC, the empirical variance of the IC yields the LeDell et al. (2015) standard error. |
 
 ### Estimates
 
@@ -205,6 +223,6 @@ Row caps: `max_kernel_rows` 2,000, `max_correlation_rows` 20,000, `max_classifie
 |---|---|---|
 | CBPE | confidence-based performance estimation | Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores. |
 | BBSE | black-box shift estimation | Estimated new class prior. Usable only if P(x given y) is unchanged. |
-| CI | confidence interval | Range for an estimate. Performance is severe only when the whole interval lies past the tolerance. |
+| CI | confidence interval | Range for an estimate. Domain-classifier `cv_auc` uses an influence-curve CI; weighted performance, CBPE, and BBSE use bootstrap CIs. Performance is severe only when the whole interval lies past the tolerance. |
 | RMSE | root mean squared error | Square root of mean squared error. Larger is worse. |
 | MAE | mean absolute error | Average absolute error. Larger is worse. |

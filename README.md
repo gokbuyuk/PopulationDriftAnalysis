@@ -169,7 +169,10 @@ paired = pdrift.run_paired_comparison(
 
 | Acronym | Meaning | Reading |
 |---|---|---|
-| AUC | area under the curve | Area under the ROC curve. 0.5 means no separation. Domain classifier: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe. |
+| AUC | area under the curve | Area under the ROC curve. 0.5 means no separation. Domain classifier pooled out-of-fold (OOF) AUC: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe. |
+| CV AUC | cross-validated area under the curve | Mean of the per-fold OOF AUCs. Target of the LeDell influence-curve confidence interval (CI). |
+| OOF | out-of-fold | Score from a model that did not train on that row. |
+| IC | influence curve | How much one observation pulls an estimator. The spread of those pulls is the asymptotic standard error for domain-classifier CV AUC (LeDell et al. 2015). |
 | TreeSHAP | Shapley additive explanations from trees | SHAP for a tree model, from LightGBM pred_contrib. |
 
 ### Estimates
@@ -178,3 +181,4 @@ paired = pdrift.run_paired_comparison(
 |---|---|---|
 | CBPE | confidence-based performance estimation | Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores. |
 | BBSE | black-box shift estimation | Estimated new class prior. Usable only if P(x given y) is unchanged. |
+| CI | confidence interval | Domain-classifier CV AUC uses an influence-curve CI; weighted performance, CBPE, and BBSE use bootstrap CIs. |

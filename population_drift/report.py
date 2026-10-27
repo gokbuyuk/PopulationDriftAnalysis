@@ -52,6 +52,7 @@ PLOT_METRIC = {
 }
 PLOT_GLOBAL_LABELS = {
     ("domain_classifier", "auc"): "AUC",
+    ("domain_classifier", "cv_auc"): "CV AUC",
     ("mmd", "mmd2"): "MMD²",
     ("energy", "energy_distance"): "energy",
     ("correlation", "frobenius"): "correlation Δ",
@@ -65,6 +66,7 @@ PLOT_GLOBAL_LABELS = {
 }
 GLOBAL_METRIC_LABELS = {
     ("domain_classifier", "auc"): "Domain classifier area under the curve (AUC)",
+    ("domain_classifier", "cv_auc"): "Domain classifier mean fold area under the curve (AUC)",
     ("mmd", "mmd2"): "squared maximum mean discrepancy (MMD²)",
     ("energy", "energy_distance"): "Energy distance",
     ("correlation", "frobenius"): "Correlation Δ (Frobenius)",
@@ -116,14 +118,16 @@ ACRONYMS: dict[str, _Acronym] = {
     "OOD": _Acronym("out-of-distribution", "Magnitudes", "Share of new rows the isolation forest calls unusual. Below 2% ordinary, 2–5% caution, above 5% material."),
     "SD": _Acronym("standard deviation", "Magnitudes", "Spread of one column. SMD and Wasserstein/SD are in these units."),
     "ECDF": _Acronym("empirical cumulative distribution function", "Magnitudes", "Share of rows at or below a value. A sideways gap is a location shift; a steeper curve is a tighter spread."),
-    "AUC": _Acronym("area under the curve", "Scores", "Area under the ROC curve. 0.5 means no separation. Domain classifier: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe."),
+    "AUC": _Acronym("area under the curve", "Scores", "Area under the ROC curve. 0.5 means no separation. Domain classifier pooled out-of-fold (OOF) AUC: ≤ 0.55 mild, ≤ 0.80 moderate, above 0.80 severe."),
+    "CV AUC": _Acronym("cross-validated area under the curve", "Scores", "Mean of the per-fold out-of-fold (OOF) AUCs. Target of the LeDell influence-curve confidence interval (CI)."),
     "ROC": _Acronym("receiver operating characteristic", "Scores", "True-positive rate against false-positive rate across cutoffs. AUC is its area."),
     "SHAP": _Acronym("Shapley additive explanations", "Scores", "A feature's additive contribution to one score. Mean absolute SHAP rank correlation below 0.80: the ranking of reasons changed."),
     "TreeSHAP": _Acronym("Shapley additive explanations from trees", "Scores", "SHAP for a tree model, from LightGBM pred_contrib."),
     "OOF": _Acronym("out-of-fold", "Scores", "Score from a model that did not train on that row."),
+    "IC": _Acronym("influence curve", "Estimates", "How much one observation pulls an estimator. The spread of those pulls is the asymptotic standard error for domain-classifier cross-validated area under the curve (CV AUC) (LeDell et al. 2015)."),
     "CBPE": _Acronym("confidence-based performance estimation", "Estimates", "Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores."),
     "BBSE": _Acronym("black-box shift estimation", "Estimates", "Estimated new class prior. Usable only if P(x given y) is unchanged."),
-    "CI": _Acronym("confidence interval", "Estimates", "Range for an estimate. Performance is severe only when the whole interval lies past the tolerance."),
+    "CI": _Acronym("confidence interval", "Estimates", "Range for an estimate. Domain-classifier CV AUC uses an influence-curve CI; weighted performance, CBPE, and BBSE use bootstrap CIs. Performance is severe only when the whole interval lies past the tolerance."),
     "RMSE": _Acronym("root mean squared error", "Estimates", "Square root of mean squared error. Larger is worse."),
     "MAE": _Acronym("mean absolute error", "Estimates", "Average absolute error. Larger is worse."),
 }
@@ -213,6 +217,10 @@ _PHRASES: tuple[tuple[str, str], ...] = (
     ("area under the curve", "AUC"),
     ("out-of-fold (OOF)", "OOF"),
     ("out-of-fold", "OOF"),
+    ("cross-validated area under the curve (CV AUC)", "CV AUC"),
+    ("cross-validated area under the curve", "CV AUC"),
+    ("influence curve (IC)", "IC"),
+    ("influence curve", "IC"),
     ("root mean squared error (RMSE)", "RMSE"),
     ("root mean squared error", "RMSE"),
     ("mean absolute error (MAE)", "MAE"),
@@ -2266,11 +2274,21 @@ def _domain_paragraph(run: ComparisonRun, baseline: BaselineRun | None, domain: 
     p95 = np.percentile(null, 95) if len(null) else np.nan
     perm_p = _scalar(domain, "permutation_p")
     drivers = run.table("domain_classifier", "importance").head(3)["feature"].tolist()
+    cv_auc = _scalar(domain, "cv_auc")
+    cv_low = _scalar(domain, "cv_auc_ci_low")
+    cv_high = _scalar(domain, "cv_auc_ci_high")
+    cv_text = ""
+    if np.isfinite(cv_auc):
+        cv_text = (f" Mean fold area under the curve (AUC) is {_fmt(cv_auc)}"
+                   f" [95% confidence interval (CI) {_fmt(cv_low)}–{_fmt(cv_high)}]"
+                   " from the influence curve (IC) of the cross-validated area under the curve (CV AUC) "
+                   "(LeDell et al. 2015).")
     return (f"<p>A LightGBM classifier trained to tell the populations apart reaches an out-of-fold (OOF) area under the curve (AUC) of "
-            f"<b>{auc:.3f}</b> [{_fmt(_scalar(domain, 'auc_ci_low'))}–{_fmt(_scalar(domain, 'auc_ci_high'))}]"
+            f"<b>{auc:.3f}</b>"
             + (f", permutation p = {perm_p:.3f}" if np.isfinite(perm_p) else "")
             + (f"; the baseline 95th percentile is {p95:.3f}" if np.isfinite(p95) else "")
-            + ". An area under the curve (AUC) near 0.5 means indistinguishable; 0.55–0.65 mild, 0.65–0.80 moderate, &gt; 0.80 strong shift. "
+            + "." + cv_text
+            + " An area under the curve (AUC) near 0.5 means indistinguishable; 0.55–0.65 mild, 0.65–0.80 moderate, &gt; 0.80 strong shift. "
             f"The separation is driven mostly by <b>{', '.join(map(html.escape, drivers))}</b>. A low area under the curve (AUC) can still "
             "hide a moderate shift in a single feature, so read it together with the feature table.</p>")
 
@@ -2483,7 +2501,7 @@ def section_methods(config: dict[str, Any], task_pairs: dict[str, str] | None = 
         ("Categorical features", "Chi-square homogeneity (sparse levels merged); Cramér's V, Jensen–Shannon (JS), Population Stability Index (PSI)",
          f"Cramér's V {th['cramers_v_moderate']}/{th['cramers_v_major']}; unseen levels > {th['unseen_level_share']:.0%}"),
         ("Missingness", "Two-proportion z-test, Cohen's h; pattern chi-square / Jensen–Shannon (JS)", f"|h| {th['cohens_h_small']}/{th['cohens_h_large']}"),
-        ("Joint distribution", f"LightGBM classifier two-sample test ({config['cv_folds']}-fold out-of-fold (OOF) area under the curve (AUC), permutation p); "
+        ("Joint distribution", f"LightGBM classifier two-sample test ({config['cv_folds']}-fold out-of-fold (OOF) area under the curve (AUC); mean fold AUC with influence-curve (IC) 95% confidence interval (CI); permutation p); "
          "maximum mean discrepancy (MMD) (RBF) and energy distance with permutation p", f"area under the curve (AUC) {th['domain_auc_mild']}/{th['domain_auc_strong']}"),
         ("Dependence", "Spearman matrices: Frobenius-norm permutation test; per-pair Fisher z (var 1.06/(n−3))",
          f"|Δρ| > {th['correlation_pair_delta']}"),
@@ -2495,7 +2513,8 @@ def section_methods(config: dict[str, Any], task_pairs: dict[str, str] | None = 
         ("Performance (no labels)", "Importance weighting (domain-classifier density ratio, Kish effective sample size (ESS)); confidence-based performance estimation (CBPE); black-box shift estimation (BBSE)",
          f"effective sample size (ESS) ratio {th['ess_ratio_poor']}/{th['ess_ratio_good']}; tolerance {config['performance_tolerance']}"),
         ("Inference", f"{config['correction_method']} correction at α = {config['alpha']}; {config['n_bootstrap']} bootstrap "
-         f"resamples; {config['n_permutations']} permutations ({config['n_classifier_permutations']} for the classifier)",
+         f"resamples (PSI, Wasserstein, weighted performance, CBPE, BBSE; domain-classifier CV AUC uses an influence-curve CI); "
+         f"{config['n_permutations']} permutations ({config['n_classifier_permutations']} for the classifier)",
          f"baseline threshold = p{th['baseline_percentile']:.0f}"),
     ]
     pairs = {
