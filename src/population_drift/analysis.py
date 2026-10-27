@@ -52,6 +52,8 @@ from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 from statsmodels.stats.weightstats import ttost_ind
 
+from population_drift.metric_uncertainty import BinomialProportion, ConfusionMatrix
+
 logger = logging.getLogger("population_drift")
 
 GLOBAL_FEATURE = "__global__"
@@ -89,8 +91,8 @@ _SIGNAL_TASKS = (
     ("Out-of-support", "joint_outliers"), ("Values outside", "range_coverage"),
     ("Model score distribution", "prediction_drift"), ("Predicted positive rate", "prediction_drift"),
     ("Model attributions", "shap_drift"), ("effective sample size", "weighted_performance"),
-    ("importance weighting", "weighted_performance"), ("CBPE", "cbpe"),
-    ("BBSE", "label_shift"), ("calibration", "calibration"),
+    ("importance weighting", "weighted_performance"), ("Operating-point sampling", "calibration"),
+    ("calibration", "calibration"), ("CBPE", "cbpe"), ("BBSE", "label_shift"),
 )
 
 
@@ -1553,7 +1555,10 @@ def _labels_and_scores(scores: np.ndarray, labels: np.ndarray, problem_type: str
 def compare_prediction_distributions(source_scores: np.ndarray, target_scores: np.ndarray,
                                      config: DriftConfig) -> TaskResult:
     """Compare model output distributions: KS, PSI and, for binary models, the predicted-positive rate
-    and the share of borderline predictions near the decision threshold."""
+    and the share of borderline predictions near the decision threshold.
+
+    Each positive rate has a Wilks binomial 95% confidence interval (Urlus et al. 2023).
+    """
     s, t = np.asarray(source_scores, float), np.asarray(target_scores, float)
     ks = stats.ks_2samp(s, t)
     row = {"feature": GLOBAL_FEATURE, "mean_source": s.mean(), "mean_target": t.mean(), "ks_d": ks.statistic,
@@ -1563,9 +1568,13 @@ def compare_prediction_distributions(source_scores: np.ndarray, target_scores: n
         pos_s, pos_t = int((s >= thr).sum()), int((t >= thr).sum())
         near_s, near_t = int((np.abs(s - thr) <= band).sum()), int((np.abs(t - thr) <= band).sum())
         h = _cohens_h(pos_t / len(t), pos_s / len(s))
+        source_rate_ci = BinomialProportion(pos_s, len(s)).interval()
+        target_rate_ci = BinomialProportion(pos_t, len(t)).interval()
         row.update({"threshold": thr, "positive_rate_source": pos_s / len(s), "positive_rate_target": pos_t / len(t),
                     "positive_rate_cohens_h": h, "positive_rate_cohens_h_abs": abs(h),
                     "positive_rate_p": _two_proportion_p(pos_t, len(t), pos_s, len(s)),
+                    "positive_rate_source_ci_low": source_rate_ci[0], "positive_rate_source_ci_high": source_rate_ci[1],
+                    "positive_rate_target_ci_low": target_rate_ci[0], "positive_rate_target_ci_high": target_rate_ci[1],
                     "near_threshold_share_source": near_s / len(s), "near_threshold_share_target": near_t / len(t),
                     "near_threshold_p": _two_proportion_p(near_t, len(t), near_s, len(s))})
     bins = np.linspace(min(s.min(), t.min()), max(s.max(), t.max()), 41)
@@ -1617,6 +1626,8 @@ def assess_calibration(source_scores: np.ndarray, source_labels: np.ndarray, con
     """Calibration of the model on the source: Brier score, ECE, calibration slope and intercept.
 
     Good calibration is a prerequisite for confidence-based performance estimation (CBPE).
+    ``operating_point`` holds Wilks 95% intervals for precision, recall, F1, and the
+    false-positive rate at ``decision_threshold`` (Urlus et al. 2023).
     """
     scores, labels = _labels_and_scores(np.asarray(source_scores, float), source_labels, "binary")
     p = np.clip(scores, 1e-6, 1 - 1e-6)
@@ -1631,7 +1642,9 @@ def assess_calibration(source_scores: np.ndarray, source_labels: np.ndarray, con
     main = pd.DataFrame([{"feature": GLOBAL_FEATURE, "brier": brier_score_loss(labels, p), "ece": float(ece),
                           "calibration_slope": float(recalibration.coef_[0, 0]),
                           "calibration_intercept": float(recalibration.intercept_[0]), "n": len(p)}])
-    return TaskResult("calibration", {"main": main, "reliability": reliability},
+    operating = ConfusionMatrix.from_predictions(labels, scores, config.decision_threshold).interval_frame(
+        config.decision_threshold)
+    return TaskResult("calibration", {"main": main, "reliability": reliability, "operating_point": operating},
                       plot_data={"reliability": reliability.to_dict(orient="list")})
 
 
@@ -1753,7 +1766,8 @@ def estimate_performance_cbpe(source_scores: np.ndarray, source_labels: np.ndarr
 
     Assumes the model is calibrated and there is no concept shift. Degradation is measured like-for-like
     (CBPE on source vs CBPE on target) so a shared calibration bias cancels; the gap between the realised
-    and estimated source metric is the sanity check of the calibration assumption.
+    and estimated source metric is the sanity check of the calibration assumption. Realised precision,
+    recall, and F1 also carry Wilks intervals for the labelled source confusion matrix.
 
     Raises:
         ValueError: For non-binary problems.
@@ -1766,9 +1780,12 @@ def estimate_performance_cbpe(source_scores: np.ndarray, source_labels: np.ndarr
     source_estimated = _expected_binary_metrics(source, thr)
     target_estimated = _expected_binary_metrics(target, thr)
     realized = {name: np.nan for name in target_estimated}
+    realized_intervals: dict[str, Any] = {}
     if source_labels is not None:
         scores, labels = _labels_and_scores(source, source_labels, "binary")
         realized = _realized_binary_metrics(scores, labels, thr)
+        matrix = ConfusionMatrix.from_predictions(labels, scores, thr)
+        realized_intervals = {item.metric: item for item in matrix.intervals()}
     rng = np.random.default_rng(config.seed)
     boot = {name: [] for name in target_estimated}
     for _ in range(config.n_bootstrap):
@@ -1779,10 +1796,15 @@ def estimate_performance_cbpe(source_scores: np.ndarray, source_labels: np.ndarr
     for name, estimate in target_estimated.items():
         reference = source_estimated[name]
         ci_low, ci_high = (np.nanpercentile(boot[name], [2.5, 97.5]) if boot[name] else (np.nan, np.nan))
-        rows.append({"metric": name, "higher_is_better": True, "source_realized": realized[name],
-                     "source_estimated": source_estimated[name], "reference_value": reference, "estimate": estimate,
-                     "ci_low": ci_low, "ci_high": ci_high, "degradation": reference - estimate,
-                     "source_calibration_gap": realized[name] - source_estimated[name]})
+        row = {"metric": name, "higher_is_better": True, "source_realized": realized[name],
+               "source_estimated": source_estimated[name], "reference_value": reference, "estimate": estimate,
+               "ci_low": ci_low, "ci_high": ci_high, "degradation": reference - estimate,
+               "source_calibration_gap": realized[name] - source_estimated[name]}
+        if realized_intervals:
+            item = realized_intervals.get(name)
+            row["source_realized_ci_low"] = item.ci_low if item is not None else np.nan
+            row["source_realized_ci_high"] = item.ci_high if item is not None else np.nan
+        rows.append(row)
     return TaskResult("cbpe", {"main": pd.DataFrame(rows)})
 
 
@@ -2260,6 +2282,51 @@ def _signal(name: str, level: str, value: str, detail: str, important: bool = Fa
     return {"signal": name, "level": level, "value": value, "detail": detail, "important": important}
 
 
+def _rate_with_interval(table: pd.DataFrame, column: str) -> str:
+    """Format a rate, with its Wilks interval when that interval was stored.
+
+    Args:
+        table: Single-row prediction table.
+        column: Rate column. The interval columns are ``{column}_ci_low`` and ``_ci_high``.
+
+    Returns:
+        A percent, or a percent followed by a bracketed interval.
+    """
+    rate = _value(table, column)
+    low, high = _value(table, f"{column}_ci_low"), _value(table, f"{column}_ci_high")
+    if np.isfinite(low) and np.isfinite(high):
+        return f"{rate:.1%} [{low:.1%}–{high:.1%}]"
+    return f"{rate:.1%}"
+
+
+def _operating_point_signal(result: DriftAnalysisResult) -> dict[str, Any] | None:
+    """Info signal for Wilks intervals at the labelled operating point.
+
+    Args:
+        result: Analysis whose calibration task may hold ``operating_point``.
+
+    Returns:
+        The signal, or None when no finite operating-point metric was stored.
+    """
+    table = result.table("calibration", "operating_point")
+    if table.empty or "metric" not in table.columns:
+        return None
+    indexed = table.set_index("metric")
+    parts = []
+    for metric in ("precision", "recall", "fpr", "f1"):
+        if metric not in indexed.index or not np.isfinite(indexed.loc[metric, "estimate"]):
+            continue
+        row = indexed.loc[metric]
+        parts.append(f"{metric} {row['estimate']:.3f} [{row['ci_low']:.3f}–{row['ci_high']:.3f}]")
+    if not parts:
+        return None
+    return _signal(
+        "Operating-point sampling uncertainty", "info", ", ".join(parts),
+        "Wilks profile-likelihood 95% confidence intervals on the labelled set at the decision threshold "
+        "(Urlus et al. 2023). Test-set sampling uncertainty only. Not an estimate on the new population.",
+    )
+
+
 def _performance_signal(name: str, table: pd.DataFrame, metric: str, config: DriftConfig) -> dict[str, Any] | None:
     """Traffic light for an estimated metric against ``performance_tolerance`` (absolute for AUC,
     relative for regression error metrics).
@@ -2431,9 +2498,14 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
                                "within baseline" if within else "beyond baseline", important=True))
         if config.problem_type == "binary":
             h, p_value = _value(prediction, "positive_rate_cohens_h_abs"), _value(prediction, "positive_rate_p")
-            signals.append(_signal("Predicted positive rate", "moderate" if h >= th.cohens_h_small and p_value < alpha else "mild",
-                                   f"{_value(prediction, 'positive_rate_source'):.1%} → {_value(prediction, 'positive_rate_target'):.1%}",
-                                   f"Cohen's h={h:.2f}, p={p_value:.3g}"))
+            rate_detail = f"Cohen's h={h:.2f}, p={p_value:.3g}."
+            if np.isfinite(_value(prediction, "positive_rate_source_ci_low")):
+                rate_detail += " Brackets are Wilks profile-likelihood 95% confidence intervals."
+            signals.append(_signal("Predicted positive rate",
+                                   "moderate" if h >= th.cohens_h_small and p_value < alpha else "mild",
+                                   f"{_rate_with_interval(prediction, 'positive_rate_source')} → "
+                                   f"{_rate_with_interval(prediction, 'positive_rate_target')}",
+                                   rate_detail))
 
     shap_summary, shap_table = result.table("shap_drift", "summary"), result.table("shap_drift")
     if not shap_summary.empty:
@@ -2489,6 +2561,9 @@ def interpret_results(result: DriftAnalysisResult, baseline_comparison: pd.DataF
             f"expected calibration error (ECE) {_value(calibration, 'ece'):.3f}, "
             f"slope {_value(calibration, 'calibration_slope'):.2f}",
                                "Computed on the training population; optimistic if these rows were used for training."))
+    operating_signal = _operating_point_signal(result)
+    if operating_signal is not None:
+        signals.append(operating_signal)
 
     counted = [s for s in signals if s["level"] != "info"]
     n_severe = sum(s["level"] == "severe" for s in counted)

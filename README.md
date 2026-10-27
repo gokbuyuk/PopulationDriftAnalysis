@@ -261,6 +261,7 @@ paired = pdrift.run_paired_comparison(
 | Mann–Whitney | Test that domain-classifier scores are higher for new rows than for training rows. For fixed scores this is the same comparison as AUC. The verdict uses the permutation p, because the scores were fitted on these rows. |
 | Fisher z | Test that one Spearman correlation differs between the samples. The z variance is 1.06/(n−3) in each sample (Fieller, Hartley, and Pearson 1957). Adjusted p below α: that pair changed. |
 | Binomial test | One-sided test that the new share outside the training 0.5–99.5% range, or the isolation-forest outlier share, exceeds the share expected from the training rule. Adjusted p below α: more new rows fall outside support. |
+| Wilks profile likelihood | Interval for one confusion-matrix metric. The profile log-likelihood ratio is compared with a chi-square distribution with one degree of freedom (Urlus et al. 2023). Used for precision, recall, F1, and the false-positive rate on the labelled set, and for each predicted-positive rate. |
 | Baseline empirical p | Share of random reference splits at least as large as the new population: (1 + such rounds) / (1 + rounds). Beyond baseline means the statistic exceeds that reference's 95th percentile. |
 
 ### Magnitudes
@@ -285,4 +286,4 @@ paired = pdrift.run_paired_comparison(
 |---|---|---|
 | CBPE | confidence-based performance estimation | Expected metric if labels were drawn from the predicted probabilities. Requires calibrated scores. |
 | BBSE | black-box shift estimation | Estimated new class prior. Usable only if P(x given y) is unchanged. |
-| CI | confidence interval | Domain-classifier CV AUC uses an influence-curve CI; weighted performance, CBPE, and BBSE use bootstrap CIs. |
+| CI | confidence interval | Domain-classifier CV AUC uses an influence-curve CI. Precision, recall, F1, the false-positive rate, and each predicted-positive rate use a Wilks profile-likelihood CI (Urlus et al. 2023). Weighted performance, CBPE, and BBSE use bootstrap CIs. |
